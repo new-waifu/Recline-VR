@@ -1,5 +1,8 @@
 # Third-party material
 
+The project itself is MIT-licensed (see `LICENSE`). These parts keep their own
+licenses:
+
 - `overlay/font_data.h` is rasterized from **DejaVu Sans Mono** (Bitstream Vera
   derived license; DejaVu changes are public domain). See
   https://dejavu-fonts.github.io/License.html.

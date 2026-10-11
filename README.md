@@ -130,3 +130,8 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
   when you get up fixes it (see docs/DESIGN.md).
 - A recenter invalidates PC-side tracker calibration (e.g. Space Calibrator) while
   streaming.
+
+## License
+
+MIT; see [LICENSE](LICENSE). Bundled third-party material keeps its own license
+(see [THIRD_PARTY.md](THIRD_PARTY.md)).
