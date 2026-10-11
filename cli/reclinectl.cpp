@@ -16,6 +16,8 @@
 #include <cstring>
 #include <string>
 
+#include <unistd.h>
+
 #include "recline_client.h"
 
 using namespace recline;

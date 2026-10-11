@@ -7,6 +7,9 @@
 #include <thread>
 #include <vector>
 
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include "recline_shm.h"
 
 using namespace recline;

@@ -19,11 +19,12 @@ mkdir -p "$OUT/recline/bin/linuxarm64"
 cp -r "$ROOT/packaging/recline/." "$OUT/recline/"
 cp "$ROOT"/packaging/overlay/* "$ROOT"/scripts/install.sh "$ROOT"/scripts/uninstall.sh "$OUT/"
 
-driver() { # name source
+driver() { # name sources...
+  name=$1; shift
   "$ZIG" c++ -target "$TARGET" $CXXFLAGS -I"$ROOT/driver" -fPIC -shared \
     -fvisibility=hidden -fvisibility-inlines-hidden \
     -Wl,--version-script="$ROOT/driver/exports.map" -Wl,-z,defs \
-    -o "$OUT/$1/bin/linuxarm64/driver_$1.so" "$2" -lpthread -ldl -lrt
+    -o "$OUT/$name/bin/linuxarm64/driver_$name.so" "$@" -lpthread -ldl -lrt
 }
 # libopenvr_api.so has no SONAME, so linking it directly would record its
 # build-host path in DT_NEEDED. Link against a stub with the same exports and
@@ -39,7 +40,10 @@ app() { # name sources...
     -L"$STUB" -lopenvr_api -Wl,-rpath,/opt/steamvr/bin/linuxarm64 -lpthread -lrt
 }
 
-driver recline "$ROOT/driver/driver_recline.cpp"
-app recline_overlay -I"$ROOT/overlay" "$ROOT/overlay/recline_overlay.cpp"
-app reclinectl "$ROOT/cli/reclinectl.cpp"
+SHM="$ROOT/common/recline_shm.cpp"
+CLIENT="$ROOT/common/recline_client.cpp"
+driver recline "$ROOT/driver/driver_recline.cpp" "$ROOT/driver/vtable_patch.cpp" "$SHM"
+app recline_overlay -I"$ROOT/overlay" "$ROOT/overlay/recline_overlay.cpp" \
+  "$ROOT/overlay/vk_texture.cpp" "$CLIENT" "$SHM"
+app reclinectl "$ROOT/cli/reclinectl.cpp" "$CLIENT" "$SHM"
 echo "built into $OUT"

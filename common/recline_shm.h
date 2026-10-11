@@ -8,19 +8,11 @@
 // builtins, which are plain lock-free 64-bit loads/stores on aarch64/x86-64.
 #pragma once
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstring>
 #include <ctime>
 #include <string>
 
-#include <fcntl.h>
-#include <sched.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 namespace recline {
 
@@ -188,154 +180,28 @@ struct HmdSnapshot {
   uint64_t pose_count = 0;
 };
 
-inline bool ReadCmd(const CmdBlock& b, CmdSnapshot* o, int attempts = 1000) {
-  return SeqRead(b.seq, [&] {
-    o->cmd_id = Ld(b.cmd_id);
-    o->cmd = Ld(b.cmd);
-    for (int i = 0; i < 4; ++i) o->q[i] = Ld(b.q[i]);
-    for (int i = 0; i < 3; ++i) o->t[i] = Ld(b.t[i]);
-  }, attempts);
-}
-inline bool ReadState(const StateBlock& b, StateSnapshot* o, int attempts = 100000) {
-  return SeqRead(b.seq, [&] {
-    o->cmd_ack = Ld(b.cmd_ack);
-    o->cmd_result = Ld(b.cmd_result);
-    o->flags = Ld(b.flags);
-    o->hmd_index = Ld(b.hmd_index);
-    for (int i = 0; i < 4; ++i) o->R_q[i] = Ld(b.R_q[i]);
-    for (int i = 0; i < 3; ++i) o->R_t[i] = Ld(b.R_t[i]);
-  }, attempts);
-}
-inline bool ReadHmd(const HmdBlock& b, HmdSnapshot* o, int attempts = 100000) {
-  return SeqRead(b.seq, [&] {
-    for (int i = 0; i < 4; ++i) o->q[i] = Ld(b.q[i]);
-    for (int i = 0; i < 3; ++i) o->t[i] = Ld(b.t[i]);
-    o->time = Ld(b.time);
-    o->pose_count = Ld(b.pose_count);
-  }, attempts);
-}
+// Seqlock readers; return false if no consistent snapshot was obtained within
+// `attempts` (a writer is active or died mid-write).
+bool ReadCmd(const CmdBlock& b, CmdSnapshot* o, int attempts = 1000);
+bool ReadState(const StateBlock& b, StateSnapshot* o, int attempts = 100000);
+bool ReadHmd(const HmdBlock& b, HmdSnapshot* o, int attempts = 100000);
 
 // Single writer (driver command thread).
-inline void WriteState(StateBlock& b, const StateSnapshot& v) {
-  const uint32_t s = SeqWriteBeginSingle(b.seq);
-  St(b.cmd_ack, v.cmd_ack);
-  St(b.cmd_result, v.cmd_result);
-  St(b.flags, v.flags);
-  St(b.hmd_index, v.hmd_index);
-  for (int i = 0; i < 4; ++i) St(b.R_q[i], v.R_q[i]);
-  for (int i = 0; i < 3; ++i) St(b.R_t[i], v.R_t[i]);
-  SeqWriteEnd(b.seq, s);
-}
+void WriteState(StateBlock& b, const StateSnapshot& v);
 
 // Multi-writer command submit (overlay, reclinectl). Spins/yields while
 // another writer holds the block. The driver force-releases a block left odd
 // for > 1 s by a crashed writer, so waiting up to timeoutSec (> 1 s) recovers.
 // Returns the cmd_id written, or 0 on timeout.
-inline uint32_t SubmitCmd(CmdBlock& b, uint32_t cmd, const double q[4], const double t[3],
-                          double timeoutSec = 2.0) {
-  const double deadline = MonotonicSeconds() + timeoutSec;
-  uint32_t s;
-  int spins = 0;
-  while (!SeqTryLock(b.seq, &s)) {
-    if (++spins < 64) {
-      CpuRelax();
-    } else {
-      sched_yield();
-      if (MonotonicSeconds() > deadline) return 0;
-    }
-  }
-  uint32_t id = Ld(b.cmd_id) + 1;
-  if (id == 0) id = 1;  // 0 means "never"
-  St(b.cmd_id, id);
-  St(b.cmd, cmd);
-  for (int i = 0; i < 4; ++i) St(b.q[i], q ? q[i] : (i == 0 ? 1.0 : 0.0));
-  for (int i = 0; i < 3; ++i) St(b.t[i], t ? t[i] : 0.0);
-  SeqWriteEnd(b.seq, s);
-  return id;
-}
+uint32_t SubmitCmd(CmdBlock& b, uint32_t cmd, const double q[4], const double t[3],
+                   double timeoutSec = 2.0);
 
-// ---------------------------------------------------------------------------
-// Open / create: the creator publishes `magic` last with release ordering;
-// openers wait briefly for it and refuse a version mismatch.
+// Open / create the segment: the creator publishes `magic` last with release
+// ordering; openers wait briefly for it and refuse a version mismatch.
 //
 // takeOverUninitialized: the driver passes true. If an existing segment never
 // gets its magic published (creator crashed between ftruncate and the magic
 // store), the driver initializes it itself instead of refusing forever.
-inline ReclineShm* OpenShm(bool takeOverUninitialized, std::string* err,
-                           const char* name = kShmName) {
-  bool created = false;
-  int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
-  if (fd >= 0) {
-    created = true;
-    if (ftruncate(fd, kShmSize) != 0) {
-      if (err) *err = std::string("ftruncate: ") + strerror(errno);
-      close(fd);
-      shm_unlink(name);
-      return nullptr;
-    }
-  } else if (errno == EEXIST) {
-    fd = shm_open(name, O_RDWR, 0600);
-    if (fd < 0) {
-      if (err) *err = std::string("shm_open existing: ") + strerror(errno);
-      return nullptr;
-    }
-    struct stat st {};
-    // A concurrent creator may not have run ftruncate yet: wait briefly.
-    for (int i = 0; i < 100; ++i) {
-      if (fstat(fd, &st) == 0 && size_t(st.st_size) >= kShmSize) break;
-      usleep(10000);
-    }
-    if (size_t(st.st_size) < kShmSize) {
-      if (err) *err = "existing /dev/shm/recline_v1 has the wrong size";
-      close(fd);
-      return nullptr;
-    }
-  } else {
-    if (err) *err = std::string("shm_open: ") + strerror(errno);
-    return nullptr;
-  }
-
-  void* p = mmap(nullptr, kShmSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  close(fd);
-  if (p == MAP_FAILED) {
-    if (err) *err = std::string("mmap: ") + strerror(errno);
-    return nullptr;
-  }
-  auto* shm = static_cast<ReclineShm*>(p);
-
-  if (created) {  // zero-filled by ftruncate
-    __atomic_store_n(&shm->version, kVersion, __ATOMIC_RELAXED);
-    __atomic_store_n(&shm->magic, kMagic, __ATOMIC_RELEASE);
-    return shm;
-  }
-
-  uint32_t magic = 0;
-  for (int i = 0; i < 100; ++i) {  // ~1 s
-    magic = __atomic_load_n(&shm->magic, __ATOMIC_ACQUIRE);
-    if (magic == kMagic) break;
-    usleep(10000);
-  }
-  if (magic != kMagic) {
-    if (magic == 0 && takeOverUninitialized) {
-      __atomic_store_n(&shm->version, kVersion, __ATOMIC_RELAXED);
-      __atomic_store_n(&shm->magic, kMagic, __ATOMIC_RELEASE);
-      return shm;
-    }
-    if (err) *err = "shared memory /recline_v1 was never initialized (bad magic)";
-    munmap(p, kShmSize);
-    return nullptr;
-  }
-  const uint32_t ver = __atomic_load_n(&shm->version, __ATOMIC_RELAXED);
-  if (ver != kVersion) {
-    if (err) {
-      char buf[128];
-      snprintf(buf, sizeof buf, "shared memory version %u, expected %u", ver, kVersion);
-      *err = buf;
-    }
-    munmap(p, kShmSize);
-    return nullptr;
-  }
-  return shm;
-}
+ReclineShm* OpenShm(bool takeOverUninitialized, std::string* err, const char* name = kShmName);
 
 }  // namespace recline
