@@ -34,6 +34,7 @@ void Usage() {
           "       reclinectl bindings     (open the controller binding editor in the headset)\n"
           "       reclinectl setting get <section> <key>\n"
           "       reclinectl setting set <section> <key> <bool|int|float|string>\n"
+          "       reclinectl setting remove <section> <key>\n"
           "       reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   (degrees, meters)\n");
 }
 
@@ -333,6 +334,14 @@ int Setting(int argc, char** argv) {
       rc = 1;
     } else {
       printf("set %s.%s = %s\n", sec, key, v.c_str());
+    }
+  } else if (std::string(argv[0]) == "remove") {
+    st->RemoveKeyInSection(sec, key, &se);
+    if (se != vr::VRSettingsError_None) {
+      fprintf(stderr, "error: %s\n", st->GetSettingsErrorNameFromEnum(se));
+      rc = 1;
+    } else {
+      printf("removed %s.%s (back to default)\n", sec, key);
     }
   } else {
     Usage();

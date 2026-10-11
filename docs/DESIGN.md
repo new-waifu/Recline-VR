@@ -266,9 +266,9 @@ streamed games with nothing installed on the PC. This is not yet verified.
 
 ## Known limitations
 
-- **Passthrough** is corrected by the XRService shim (verified in the 3D room
-  view; the 2D room-view mode is untested). If the shim isn't loaded or one of its
-  checks fails, passthrough is misaligned while reclined.
+- **Passthrough** is corrected by the XRService shim (verified in both the 3D and
+  2D room-view modes). If the shim isn't loaded or one of its checks fails,
+  passthrough is misaligned while reclined.
 - **Boundaries** are drawn in the un-rotated frame and look tilted while reclined.
 - **SteamVR safe mode** disables add-on drivers after a crash; the overlay reports
   the driver as not loaded.

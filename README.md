@@ -52,7 +52,7 @@ from the game.
     reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   # explicit rotation (deg, m), testing
     reclinectl poses                       # device poses per tracking space + display geometry
     reclinectl bindings                    # open the binding editor in the headset
-    reclinectl setting get|set <section> <key> [value]  # SteamVR settings, for experiments
+    reclinectl setting get|set|remove <section> <key> [value]  # SteamVR settings, for experiments
 
 ## Build
 
@@ -112,9 +112,9 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
 
 ## Known limitations
 
-- Passthrough is corrected in the 3D room view; the 2D room view is untested. If
-  the XRService shim can't load or its safety checks fail, passthrough is
-  misaligned while reclined (see `~/.local/share/recline-vr/xrshim.log`).
+- Passthrough (3D and 2D room view) relies on the XRService shim. If it can't load
+  or its safety checks fail, passthrough is misaligned while reclined (see
+  `~/.local/share/recline-vr/xrshim.log`).
 - The boundary is drawn un-rotated and looks tilted while reclined.
 - A recenter invalidates PC-side tracker calibration (e.g. Space Calibrator) while
   streaming.
@@ -149,9 +149,8 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
 - **SteamVR restart from the headset** ends vrserver without driver cleanup (Valve's
   own driver is skipped too); only full shutdowns log the cleanup. `assert_*.dmp`
   files written at restart come from `vrdashboard` and the Steam client.
-- **Passthrough (3D room view):** while reclined, the room view lines up with the
-  real room. The shim is mapped only into XRService (`grep -l librecline_xrshim
+- **Passthrough:** while reclined, the room view lines up with the real room in
+  both the 3D and the 2D mode (`camera.roomView` 1). The shim is mapped only into XRService (`grep -l librecline_xrshim
   /proc/*/maps`); camera-pose validation passes in about a second of head motion
   (cameras within 6.6 cm of the head, 0.7° spread).
-- **Not yet tested:** streaming to a PC, the safe-mode message, uninstall, 2D room
-  view.
+- **Not yet tested:** streaming to a PC, the safe-mode message, uninstall.
