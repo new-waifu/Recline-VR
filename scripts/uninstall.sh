@@ -19,5 +19,6 @@ fi
 
 "$VRPATHREG" removedriver "$DEST/recline"
 echo "driver unregistered."
-echo "Now restart SteamVR so the driver is unloaded, then delete $DEST"
+echo "Now restart SteamVR so the driver is unloaded (on the Frame: steamvr restart),"
+echo "then delete $DEST"
 echo "(optionally also: rm /dev/shm/recline_v1)."

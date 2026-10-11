@@ -37,5 +37,4 @@ else
   echo "SteamVR is not running: start it and run '$DEST/recline_overlay --register'"
 fi
 
-echo "Restart SteamVR, then check ~/.local/share/Steam/logs/vrserver.txt for 'recline'"
-echo "and run '$DEST/reclinectl status'."
+echo "Restart SteamVR to load the driver (on the Frame: steamvr restart)."

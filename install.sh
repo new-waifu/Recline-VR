@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds Recline VR on the Frame and installs it for the current user:
 #
-#   ./install.sh        then restart SteamVR
+#   ./install.sh        then: steamvr restart
 #
 # Re-run after pulling updates. BUILD (default: build) is the CMake build dir;
 # DEST is passed through to the staged install.sh.

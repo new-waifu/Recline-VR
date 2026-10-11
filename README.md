@@ -60,20 +60,21 @@ produce.
 
 ## Install / uninstall
 
-On the Frame (it ships with CMake and a compiler), with SteamVR running, from a
-clone of this repository:
+On the Frame (it ships with CMake and a compiler), with SteamVR running:
 
+    git clone https://github.com/new-waifu/Recline-VR.git
+    cd Recline-VR
     ./install.sh        # builds, runs the unit tests, installs to ~/.local/share/recline-vr
-    # restart SteamVR, then:
-    ~/.local/share/recline-vr/reclinectl status
+    steamvr restart
 
 Everything goes into your home directory; nothing in `/opt` is touched. To update,
-pull and run `./install.sh` again, then restart SteamVR.
+`git pull` and run `./install.sh` again, then restart SteamVR the same way.
 
 Uninstall (SteamVR running):
 
     ~/.local/share/recline-vr/uninstall.sh   # unregisters overlay and driver
-    # restart SteamVR, then delete ~/.local/share/recline-vr (optionally /dev/shm/recline_v1)
+    steamvr restart
+    rm -rf ~/.local/share/recline-vr         # optionally also /dev/shm/recline_v1
 
 ## Build
 
