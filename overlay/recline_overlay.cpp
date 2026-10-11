@@ -1,0 +1,517 @@
+// recline_overlay: SteamVR dashboard overlay + global input actions that
+// drive driver_recline over /recline_v1. See SPEC.md §5.
+//
+//   recline_overlay               run as overlay (VRApplication_Overlay)
+//   recline_overlay --register    add manifest + enable auto-launch, then exit
+//   recline_overlay --unregister  disable auto-launch + remove manifest, then exit
+
+#include <openvr.h>
+
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+
+#include <limits.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "canvas.h"
+#include "recline_client.h"
+
+namespace {
+
+using namespace recline;
+
+constexpr const char* kAppKey = "user.recline.overlay";
+constexpr const char* kOverlayKey = "user.recline.overlay.dashboard";
+constexpr int kW = 1024, kH = 640;
+
+const recline_font::FontFace& kSmall = recline_font::kFace22;
+const recline_font::FontFace& kBig = recline_font::kFace34;
+
+const Color kBg{24, 26, 32, 255};
+const Color kPanel{40, 44, 54, 255};
+const Color kText{230, 232, 238, 255};
+const Color kDim{150, 156, 170, 255};
+const Color kAccent{70, 140, 255, 255};
+const Color kAccentDark{40, 70, 130, 255};
+const Color kGood{90, 200, 120, 255};
+const Color kWarn{255, 190, 70, 255};
+const Color kBad{255, 95, 95, 255};
+
+std::string ExeDir() {
+  char buf[PATH_MAX];
+  const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+  if (n <= 0) return ".";
+  buf[n] = 0;
+  std::string s(buf);
+  const size_t slash = s.rfind('/');
+  return slash == std::string::npos ? "." : s.substr(0, slash);
+}
+
+const char* AppErr(vr::EVRApplicationError e) {
+  return vr::VRApplications() ? vr::VRApplications()->GetApplicationsErrorNameFromEnum(e) : "?";
+}
+
+bool InitVR(vr::EVRApplicationType type) {
+  vr::EVRInitError e = vr::VRInitError_None;
+  vr::VR_Init(&e, type);
+  if (e != vr::VRInitError_None) {
+    fprintf(stderr, "VR_Init failed: %s (is SteamVR running?)\n",
+            vr::VR_GetVRInitErrorAsEnglishDescription(e));
+    return false;
+  }
+  return true;
+}
+
+int Register(const std::string& manifest) {
+  if (access(manifest.c_str(), R_OK) != 0) {
+    fprintf(stderr, "manifest not found: %s\n", manifest.c_str());
+    return 1;
+  }
+  if (!InitVR(vr::VRApplication_Utility)) return 1;
+  auto* apps = vr::VRApplications();
+  if (apps->IsApplicationInstalled(kAppKey))
+    printf("%s already registered; re-adding to pick up the current path\n", kAppKey);
+  vr::EVRApplicationError e = apps->AddApplicationManifest(manifest.c_str(), false);
+  if (e != vr::VRApplicationError_None) {
+    fprintf(stderr, "AddApplicationManifest(%s): %s\n", manifest.c_str(), AppErr(e));
+    vr::VR_Shutdown();
+    return 1;
+  }
+  e = apps->SetApplicationAutoLaunch(kAppKey, true);
+  if (e != vr::VRApplicationError_None) {
+    fprintf(stderr, "SetApplicationAutoLaunch: %s\n", AppErr(e));
+    vr::VR_Shutdown();
+    return 1;
+  }
+  printf("registered %s (%s), auto-launch on\n", kAppKey, manifest.c_str());
+  vr::VR_Shutdown();
+  return 0;
+}
+
+int Unregister(const std::string& manifest) {
+  if (!InitVR(vr::VRApplication_Utility)) return 1;
+  auto* apps = vr::VRApplications();
+  if (!apps->IsApplicationInstalled(kAppKey)) {
+    printf("%s is not registered\n", kAppKey);
+    vr::VR_Shutdown();
+    return 0;
+  }
+  vr::EVRApplicationError e = apps->SetApplicationAutoLaunch(kAppKey, false);
+  if (e != vr::VRApplicationError_None)
+    fprintf(stderr, "SetApplicationAutoLaunch(false): %s\n", AppErr(e));
+  e = apps->RemoveApplicationManifest(manifest.c_str());
+  int rc = 0;
+  if (e != vr::VRApplicationError_None) {
+    fprintf(stderr, "RemoveApplicationManifest(%s): %s\n", manifest.c_str(), AppErr(e));
+    rc = 1;
+  } else {
+    printf("unregistered %s\n", kAppKey);
+  }
+  vr::VR_Shutdown();
+  return rc;
+}
+
+// ---------------------------------------------------------------------------
+// Persistent UI options (not the transform: that is never persisted).
+
+struct Options {
+  RecenterOptions rc;
+  bool seatedReset = true;
+};
+
+std::string ConfigPath() {
+  const char* xdg = getenv("XDG_CONFIG_HOME");
+  const char* home = getenv("HOME");
+  std::string base = xdg && *xdg ? xdg : std::string(home ? home : ".") + "/.config";
+  return base + "/recline-vr/overlay.conf";
+}
+
+void LoadOptions(Options* o) {
+  FILE* f = fopen(ConfigPath().c_str(), "r");
+  if (!f) return;
+  char key[64];
+  double v;
+  while (fscanf(f, " %63[^=]=%lf", key, &v) == 2) {
+    const std::string k(key);
+    if (k == "levelOnly") o->rc.levelOnly = v != 0;
+    else if (k == "keepPosition") o->rc.keepPosition = v != 0;
+    else if (k == "eyeHeight" && v >= 0.2 && v <= 2.5) o->rc.eyeHeight = v;
+    else if (k == "seatedReset") o->seatedReset = v != 0;
+  }
+  fclose(f);
+}
+
+void SaveOptions(const Options& o) {
+  const std::string path = ConfigPath();
+  const std::string dir = path.substr(0, path.rfind('/'));
+  mkdir(dir.substr(0, dir.rfind('/')).c_str(), 0700);
+  mkdir(dir.c_str(), 0700);
+  FILE* f = fopen(path.c_str(), "w");
+  if (!f) return;
+  fprintf(f, "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\n", o.rc.levelOnly,
+          o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset);
+  fclose(f);
+}
+
+// ---------------------------------------------------------------------------
+
+class App {
+ public:
+  explicit App(std::string dir) : dir_(std::move(dir)), canvas_(kW, kH) {}
+
+  int Run() {
+    if (!InitVR(vr::VRApplication_Overlay)) return 1;
+    LoadOptions(&opt_);
+    const char* flip = getenv("RECLINE_MOUSE_FLIP_Y");
+    if (flip) flipMouseY_ = atoi(flip) != 0;
+
+    auto* ov = vr::VROverlay();
+    vr::EVROverlayError oe = ov->CreateDashboardOverlay(kOverlayKey, "Recline", &main_, &thumb_);
+    if (oe != vr::VROverlayError_None) {
+      fprintf(stderr, "CreateDashboardOverlay: %s\n", ov->GetOverlayErrorNameFromEnum(oe));
+      vr::VR_Shutdown();
+      return 1;
+    }
+    ov->SetOverlayWidthInMeters(main_, 2.0f);
+    ov->SetOverlayInputMethod(main_, vr::VROverlayInputMethod_Mouse);
+    vr::HmdVector2_t scale{{float(kW), float(kH)}};
+    ov->SetOverlayMouseScale(main_, &scale);
+    RenderThumbnail();
+
+    SetupInput();
+    OpenShmIfNeeded();
+    RefreshStatus();
+    Render();
+
+    double nextStatus = 0;
+    while (!quit_) {
+      PumpEvents();
+      PollActions();
+      const double now = MonotonicSeconds();
+      if (now >= nextStatus) {
+        nextStatus = now + 0.25;
+        OpenShmIfNeeded();
+        RefreshStatus();
+        dirty_ = true;
+      }
+      if (dirty_ && ov->IsOverlayVisible(main_)) Render();
+      usleep(20000);
+    }
+    vr::VR_Shutdown();
+    return 0;
+  }
+
+ private:
+  // --- setup -----------------------------------------------------------------
+
+  void SetupInput() {
+    auto* in = vr::VRInput();
+    const std::string manifest = dir_ + "/actions.json";
+    vr::EVRInputError e = in->SetActionManifestPath(manifest.c_str());
+    if (e != vr::VRInputError_None) {
+      fprintf(stderr, "SetActionManifestPath(%s) failed: %d\n", manifest.c_str(), int(e));
+      return;
+    }
+    in->GetActionSetHandle("/actions/recline", &actionSet_);
+    in->GetActionHandle("/actions/recline/in/recenter", &actRecenter_);
+    in->GetActionHandle("/actions/recline/in/reset", &actReset_);
+    in->GetActionHandle("/actions/recline/out/haptic", &actHaptic_);
+    in->GetInputSourceHandle("/user/hand/left", &srcLeft_);
+    in->GetInputSourceHandle("/user/hand/right", &srcRight_);
+    inputOk_ = true;
+  }
+
+  void OpenShmIfNeeded() {
+    if (shm_) return;
+    std::string err;
+    shm_ = OpenShm(/*takeOverUninitialized=*/false, &err);
+    if (!shm_) shmError_ = err;
+  }
+
+  // --- events & input ------------------------------------------------------------
+
+  void PumpEvents() {
+    vr::VREvent_t ev;
+    while (vr::VRSystem()->PollNextEvent(&ev, sizeof ev)) {
+      if (ev.eventType == vr::VREvent_Quit) {
+        vr::VRSystem()->AcknowledgeQuit_Exiting();
+        quit_ = true;
+      }
+    }
+    while (vr::VROverlay()->PollNextOverlayEvent(main_, &ev, sizeof ev)) {
+      switch (ev.eventType) {
+        case vr::VREvent_MouseMove:
+        case vr::VREvent_MouseButtonDown: {
+          const int x = int(ev.data.mouse.x);
+          const int y = flipMouseY_ ? kH - 1 - int(ev.data.mouse.y) : int(ev.data.mouse.y);
+          if (x != mouseX_ || y != mouseY_) dirty_ = true;
+          mouseX_ = x;
+          mouseY_ = y;
+          if (ev.eventType == vr::VREvent_MouseButtonDown &&
+              ev.data.mouse.button == vr::VRMouseButton_Left)
+            OnClick(x, y);
+          break;
+        }
+        case vr::VREvent_OverlayShown:
+          dirty_ = true;
+          break;
+        case vr::VREvent_Quit:
+          quit_ = true;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  void PollActions() {
+    if (!inputOk_) return;
+    vr::VRActiveActionSet_t set{};
+    set.ulActionSet = actionSet_;
+    set.ulRestrictedToDevice = vr::k_ulInvalidInputValueHandle;
+    set.ulSecondaryActionSet = vr::k_ulInvalidActionSetHandle;
+    // Global overlay priority so the actions work while a game has focus.
+    set.nPriority = vr::k_nActionSetOverlayGlobalPriorityMin;
+    if (vr::VRInput()->UpdateActionState(&set, sizeof set, 1) != vr::VRInputError_None) return;
+    if (Pressed(actRecenter_)) DoRecenter();
+    if (Pressed(actReset_)) DoReset();
+  }
+
+  bool Pressed(vr::VRActionHandle_t a) {
+    vr::InputDigitalActionData_t d{};
+    if (vr::VRInput()->GetDigitalActionData(a, &d, sizeof d, vr::k_ulInvalidInputValueHandle) !=
+        vr::VRInputError_None)
+      return false;
+    return d.bActive && d.bChanged && d.bState;
+  }
+
+  void Haptic() {
+    if (!inputOk_) return;
+    for (auto src : {srcLeft_, srcRight_})
+      vr::VRInput()->TriggerHapticVibrationAction(actHaptic_, 0, 0.12f, 160.0f, 0.6f, src);
+  }
+
+  // --- actions -----------------------------------------------------------------
+
+  void SetMessage(const std::string& m, Color c) {
+    message_ = m;
+    messageColor_ = c;
+    dirty_ = true;
+    fprintf(stderr, "%s\n", m.c_str());
+  }
+
+  void DoRecenter() {
+    OpenShmIfNeeded();
+    if (!shm_) return SetMessage("Shared memory unavailable: " + shmError_, kBad);
+    Rigid traw;
+    std::string err;
+    if (!BuildTraw(vr::VRSystem(), opt_.rc, &traw, &err)) return SetMessage(err, kBad);
+    const SendResult r = SendCommand(shm_, CMD_RECENTER, &traw);
+    if (r != SendResult::Ok) return SetMessage(std::string("Recenter failed: ") + SendResultText(r), kBad);
+    if (opt_.seatedReset) {
+      // Let the new R reach a couple of frames before sampling the seated zero.
+      usleep(useconds_t(2e6 / DisplayHz()));
+      vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
+    }
+    Haptic();
+    SetMessage(opt_.seatedReset ? "Recentered (seated zero reset too)" : "Recentered", kGood);
+    RefreshStatus();
+  }
+
+  void DoReset() {
+    OpenShmIfNeeded();
+    if (!shm_) return SetMessage("Shared memory unavailable: " + shmError_, kBad);
+    const SendResult r = SendCommand(shm_, CMD_RESET, nullptr);
+    if (r != SendResult::Ok) return SetMessage(std::string("Reset failed: ") + SendResultText(r), kBad);
+    Haptic();
+    SetMessage("Back to normal", kGood);
+    RefreshStatus();
+  }
+
+  float DisplayHz() {
+    vr::ETrackedPropertyError e;
+    const float hz = vr::VRSystem()->GetFloatTrackedDeviceProperty(
+        vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float, &e);
+    return (e == vr::TrackedProp_Success && hz > 20.0f) ? hz : 90.0f;
+  }
+
+  void RefreshStatus() {
+    status_ = QueryStatus(shm_, &lastPoseCount_);
+    vr::EVRSettingsError se = vr::VRSettingsError_None;
+    safeModeBlocked_ = vr::VRSettings()->GetBool("driver_recline", "blocked_by_safe_mode", &se) &&
+                       se == vr::VRSettingsError_None;
+  }
+
+  // --- UI ----------------------------------------------------------------------------
+
+  enum Hit {
+    kHitNone, kHitRecenter, kHitReset, kHitRotFull, kHitRotLevel, kHitPosHeight, kHitPosKeep,
+    kHitHeightMinus, kHitHeightPlus, kHitSeated
+  };
+
+  void OnClick(int x, int y) {
+    for (const auto& h : hits_) {
+      if (!h.first.Contains(x, y)) continue;
+      switch (h.second) {
+        case kHitRecenter: DoRecenter(); return;
+        case kHitReset: DoReset(); return;
+        case kHitRotFull: opt_.rc.levelOnly = false; break;
+        case kHitRotLevel: opt_.rc.levelOnly = true; break;
+        case kHitPosHeight: opt_.rc.keepPosition = false; break;
+        case kHitPosKeep: opt_.rc.keepPosition = true; break;
+        case kHitHeightMinus: opt_.rc.eyeHeight = std::max(0.2, opt_.rc.eyeHeight - 0.05); break;
+        case kHitHeightPlus: opt_.rc.eyeHeight = std::min(2.5, opt_.rc.eyeHeight + 0.05); break;
+        case kHitSeated: opt_.seatedReset = !opt_.seatedReset; break;
+        default: return;
+      }
+      SaveOptions(opt_);
+      dirty_ = true;
+      return;
+    }
+  }
+
+  void Button(Rect r, const std::string& label, Hit id, bool selected,
+              const recline_font::FontFace& f = kSmall) {
+    const bool hover = r.Contains(mouseX_, mouseY_);
+    canvas_.FillRect(r, selected ? kAccent : (hover ? Color{60, 66, 80, 255} : kPanel));
+    if (!selected) canvas_.StrokeRect(r, hover ? kAccent : Color{70, 76, 90, 255});
+    canvas_.TextCentered(r, label, f, kText);
+    hits_.push_back({r, id});
+  }
+
+  void Render() {
+    dirty_ = false;
+    hits_.clear();
+    Canvas& c = canvas_;
+    c.Clear(kBg);
+    c.Text(32, 22, "Recline Recenter", kBig, kText);
+
+    Button({32, 80, 470, 90}, "RECLINE RECENTER", kHitRecenter, false, kBig);
+    Button({522, 80, 470, 90}, "Reset to normal", kHitReset, false, kBig);
+
+    int y = 196;
+    c.Text(32, y + 12, "Rotation", kSmall, kDim);
+    Button({200, y, 220, 46}, "Full", kHitRotFull, !opt_.rc.levelOnly);
+    Button({430, y, 220, 46}, "Level only", kHitRotLevel, opt_.rc.levelOnly);
+    y += 58;
+    c.Text(32, y + 12, "Position", kSmall, kDim);
+    Button({200, y, 220, 46}, "Target height", kHitPosHeight, !opt_.rc.keepPosition);
+    Button({430, y, 220, 46}, "Keep position", kHitPosKeep, opt_.rc.keepPosition);
+    char buf[160];
+    snprintf(buf, sizeof buf, "%.2f m", opt_.rc.eyeHeight);
+    Button({680, y, 50, 46}, "-", kHitHeightMinus, false);
+    c.TextCentered({730, y, 130, 46}, buf, kSmall, opt_.rc.keepPosition ? kDim : kText);
+    Button({860, y, 50, 46}, "+", kHitHeightPlus, false);
+    y += 58;
+    Button({32, y + 6, 34, 34}, opt_.seatedReset ? "x" : "", kHitSeated, opt_.seatedReset);
+    c.Text(80, y + 12, "Also reset seated zero pose after recenter", kSmall, kText);
+
+    // Status panel
+    y += 60;
+    c.FillRect({32, y, kW - 64, kH - y - 24}, kPanel);
+    int ty = y + 12;
+    auto line = [&](const std::string& s, Color col) {
+      if (ty + kSmall.cellH > kH - 28) return;
+      c.Text(48, ty, s, kSmall, col);
+      ty += kSmall.cellH + 3;
+    };
+    const auto& st = status_.state;
+    if (!shm_) {
+      line("Driver: shared memory unavailable (" + shmError_ + ")", kBad);
+    } else if (safeModeBlocked_) {
+      line("Driver: blocked by SteamVR safe mode - re-enable it in Settings > Startup", kBad);
+    } else if (!status_.driverAlive) {
+      line("Driver: NOT LOADED (no poses) - check vrserver.txt / vrpathreg", kBad);
+    } else if (st.flags & FLAG_HOOK_REFUSED) {
+      line("Driver: loaded, but the pose hook was refused (see vrserver.txt)", kBad);
+    } else if (st.flags & FLAG_HOOK_INSTALLED) {
+      line("Driver: loaded, hook installed", kGood);
+    } else {
+      line("Driver: loaded, hook not installed", kWarn);
+    }
+    const bool active = status_.driverAlive && (st.flags & FLAG_TRANSFORM_ACTIVE);
+    if (active) {
+      double yaw, pitch, roll;
+      ToYawPitchRoll({st.R_q[0], st.R_q[1], st.R_q[2], st.R_q[3]}, &yaw, &pitch, &roll);
+      snprintf(buf, sizeof buf, "Transform ACTIVE: yaw %.0f  pitch %.0f  roll %.0f deg", Deg(yaw),
+               Deg(pitch), Deg(roll));
+      line(buf, kAccent);
+    } else {
+      line("Transform: none (normal tracking)", kDim);
+    }
+    if (st.flags & FLAG_CONFLICT_WRAPPED)
+      line("Warning: another pose hook wraps ours (it applies before recline)", kWarn);
+    if (st.flags & FLAG_CONFLICT_DOWNSTREAM)
+      line("Warning: something modifies poses after recline", kWarn);
+    if (active) {
+      line("Boundary and passthrough are drawn un-rotated while reclined.", kDim);
+      line("PC Space Calibrator calibration is invalid while reclined.", kDim);
+    }
+    if (!message_.empty()) line(message_, messageColor_);
+
+    vr::VROverlay()->SetOverlayRaw(main_, c.MutableData(), kW, kH, 4);
+  }
+
+  void RenderThumbnail() {
+    Canvas t(128, 128);
+    t.Clear(kAccentDark);
+    // A tilted horizon line as an icon.
+    for (int x = 16; x < 112; ++x) {
+      const int y = 76 - (x - 16) * 24 / 96;
+      t.FillRect({x, y, 1, 6}, kText);
+    }
+    t.TextCentered({0, 84, 128, 40}, "RCL", kSmall, kText);
+    vr::VROverlay()->SetOverlayRaw(thumb_, t.MutableData(), 128, 128, 4);
+  }
+
+  std::string dir_;
+  Canvas canvas_;
+  Options opt_;
+  vr::VROverlayHandle_t main_ = vr::k_ulOverlayHandleInvalid, thumb_ = vr::k_ulOverlayHandleInvalid;
+  vr::VRActionSetHandle_t actionSet_ = vr::k_ulInvalidActionSetHandle;
+  vr::VRActionHandle_t actRecenter_ = vr::k_ulInvalidActionHandle, actReset_ = vr::k_ulInvalidActionHandle,
+                       actHaptic_ = vr::k_ulInvalidActionHandle;
+  vr::VRInputValueHandle_t srcLeft_ = vr::k_ulInvalidInputValueHandle,
+                           srcRight_ = vr::k_ulInvalidInputValueHandle;
+  bool inputOk_ = false;
+  ReclineShm* shm_ = nullptr;
+  std::string shmError_;
+  DriverStatus status_;
+  uint64_t lastPoseCount_ = 0;
+  bool safeModeBlocked_ = false;
+  std::vector<std::pair<Rect, Hit>> hits_;
+  int mouseX_ = -1, mouseY_ = -1;
+  // OpenVR reports overlay mouse coordinates with the origin at the bottom
+  // left; our canvas is top-down. Override with RECLINE_MOUSE_FLIP_Y=0.
+  bool flipMouseY_ = true;
+  bool dirty_ = true, quit_ = false;
+  std::string message_;
+  Color messageColor_ = kText;
+};
+
+void Usage() {
+  printf("usage: recline_overlay [--register | --unregister]\n"
+         "  (no args)      run as SteamVR dashboard overlay\n"
+         "  --register     register manifest with SteamVR and enable auto-launch\n"
+         "  --unregister   disable auto-launch and remove the manifest\n");
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  const std::string dir = ExeDir();
+  const std::string manifest = dir + "/recline_overlay.vrmanifest";
+  if (argc > 1) {
+    const std::string a = argv[1];
+    if (a == "--register") return Register(manifest);
+    if (a == "--unregister") return Unregister(manifest);
+    Usage();
+    return a == "--help" || a == "-h" ? 0 : 2;
+  }
+  return App(dir).Run();
+}

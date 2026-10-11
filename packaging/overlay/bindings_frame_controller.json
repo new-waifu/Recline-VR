@@ -1,0 +1,42 @@
+{
+	"controller_type": "frame_controller",
+	"description": "Recline Recenter defaults: long-press to recenter / reset",
+	"name": "Recline Recenter defaults",
+	"bindings": {
+		"/actions/recline": {
+			"sources": [
+				{
+					"path": "/user/hand/right/input/y",
+					"mode": "button",
+					"inputs": {
+						"long": {
+							"output": "/actions/recline/in/recenter"
+						}
+					}
+				},
+				{
+					"path": "/user/hand/right/input/x",
+					"mode": "button",
+					"inputs": {
+						"long": {
+							"output": "/actions/recline/in/reset"
+						}
+					}
+				}
+			],
+			"haptics": [
+				{
+					"output": "/actions/recline/out/haptic",
+					"path": "/user/hand/left/output/haptic"
+				},
+				{
+					"output": "/actions/recline/out/haptic",
+					"path": "/user/hand/right/output/haptic"
+				}
+			],
+			"chords": [],
+			"poses": [],
+			"skeleton": []
+		}
+	}
+}

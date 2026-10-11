@@ -1,0 +1,20 @@
+{
+	"source" : "builtin",
+	"applications" : [
+		{
+			"app_key" : "user.recline.overlay",
+			"launch_type" : "binary",
+			"binary_path" : "recline_overlay",
+			"binary_path_linux" : "recline_overlay",
+			"binary_path_linux_arm" : "recline_overlay",
+			"is_dashboard_overlay" : true,
+			"action_manifest_path" : "actions.json",
+			"strings" : {
+				"en_us" : {
+					"name" : "Recline Recenter",
+					"description" : "Recenter pitch, roll and yaw so you can use VR lying down"
+				}
+			}
+		}
+	]
+}

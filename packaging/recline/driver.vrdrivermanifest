@@ -1,0 +1,7 @@
+{
+	"name" : "recline",
+	"directory" : "",
+	"alwaysActivate" : true,
+	"resourceOnly" : false,
+	"hmd_presence" : []
+}

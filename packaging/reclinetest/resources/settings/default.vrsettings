@@ -1,0 +1,8 @@
+{
+	"driver_reclinetest" : {
+		"enable" : true,
+		"loadPriority" : 200,
+		"yawDeg" : 10.0,
+		"offsetX" : 0.0
+	}
+}

@@ -1,0 +1,23 @@
+{
+	"default_bindings" : [
+		{ "controller_type" : "frame_controller", "binding_url" : "bindings_frame_controller.json" },
+		{ "controller_type" : "knuckles", "binding_url" : "bindings_knuckles.json" }
+	],
+	"actions" : [
+		{ "name" : "/actions/recline/in/recenter", "type" : "boolean", "requirement" : "optional" },
+		{ "name" : "/actions/recline/in/reset", "type" : "boolean", "requirement" : "optional" },
+		{ "name" : "/actions/recline/out/haptic", "type" : "vibration" }
+	],
+	"action_sets" : [
+		{ "name" : "/actions/recline", "usage" : "leftright" }
+	],
+	"localization" : [
+		{
+			"language_tag" : "en_US",
+			"/actions/recline" : "Recline Recenter",
+			"/actions/recline/in/recenter" : "Recline recenter (current head pose becomes level/forward)",
+			"/actions/recline/in/reset" : "Reset recline to normal",
+			"/actions/recline/out/haptic" : "Confirmation pulse"
+		}
+	]
+}
