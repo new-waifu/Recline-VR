@@ -159,4 +159,9 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
   (cameras within 6.6 cm of the head, 0.7° spread).
 - **Streaming to a PC:** recline works in streamed PC games with nothing installed
   on the PC.
-- **Not yet tested:** the safe-mode message, uninstall.
+- **Uninstall:** with SteamVR running, `uninstall.sh` unregisters the overlay
+  manifest and the driver; after a SteamVR restart nothing loads (no `recline` in
+  `vrserver.txt`, no overlay process, shim mapped nowhere). The running overlay
+  stays up until that restart. Deleting the install dir and reinstalling with
+  `install.sh` restores everything.
+- **Not yet tested:** the safe-mode message.
