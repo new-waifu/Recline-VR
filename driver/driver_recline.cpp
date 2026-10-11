@@ -24,6 +24,7 @@
 #include "recline_math.h"
 #include "pose_math.h"
 #include "recline_shm.h"
+#include "camera_hook.h"
 #include "slot_patch.h"
 #include "spawn_inject.h"
 
@@ -115,6 +116,14 @@ inline bool ReadLocalR(RSnapshot* o) {
     }
   }
   return false;
+}
+
+// R for the camera-frame hook: false when identity or unreadable.
+bool ReadActiveR(Rigid* out) {
+  RSnapshot s;
+  if (!ReadLocalR(&s) || s.identity) return false;
+  *out = s.r;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -330,6 +339,8 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       g_hookInstalled.store(true);
       state_.flags |= FLAG_HOOK_INSTALLED;
       Log("hook installed; chained to %p", reinterpret_cast<void*>(g_prev.load()));
+      if (!InstallDeviceAddedHook(host_, &why))
+        Log("camera hook unavailable: %s", why.c_str());
     }
 
     if (shm) {
@@ -345,6 +356,7 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
   void Cleanup() override {
     running_.store(false);
     if (thread_.joinable()) thread_.join();
+    DisableCameraHooks();
     // Pure pass-through from now on, whether or not we can unhook: wrappers
     // installed after us may still call into PoseHook.
     g_disabled.store(true, std::memory_order_release);
@@ -434,6 +446,9 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       bool stateDirty = false;
 
       MaybeInjectSpawn();
+      if (g_hookInstalled.load(std::memory_order_relaxed))
+        MaybeHookCamera(g_hmdPoseCount.load(std::memory_order_relaxed) > 0, &ReadActiveR,
+                        [](const std::string& m) { Log("%s", m.c_str()); });
 
       if (shm_) {
         // Crashed CmdBlock writer recovery: the only cross-writer recovery. A seq that stays at the same odd value for > 1 s belongs to

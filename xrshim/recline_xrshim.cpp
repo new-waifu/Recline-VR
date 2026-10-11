@@ -192,9 +192,7 @@ void ResolveRawHandle(void* self) {
   Log("StringToHandle(%s) = 0x%llx (err %u)", kRawFromMeshPose, (unsigned long long)h, err);
 }
 
-std::atomic<uint64_t> g_hits{0};
-double g_nextHitLog = 0;
-std::atomic<int> g_matrixWritesLogged{0};
+std::atomic<bool> g_loggedFirstHit{false};
 
 uint32_t HookWritePathBatch(void* self, uint64_t root, PathWrite* w, uint32_t n) {
   const WriteFn orig = g_origWrite.load(std::memory_order_acquire);
@@ -202,15 +200,6 @@ uint32_t HookWritePathBatch(void* self, uint64_t root, PathWrite* w, uint32_t n)
     return orig ? orig(self, root, w, n) : 0;
   ResolveRawHandle(self);
   const uint64_t hRaw = g_hRaw.load(std::memory_order_acquire);
-
-  // Diagnostics: the first few matrix writes, so a mismatch is visible.
-  for (uint32_t i = 0; i < n; ++i) {
-    if (w[i].unTag != kHmdMatrix34Tag || w[i].unBufferSize != 48) continue;
-    if (g_matrixWritesLogged.fetch_add(1, std::memory_order_relaxed) >= 8) break;
-    Log("matrix write: root 0x%llx path 0x%llx str %s%s", (unsigned long long)root,
-        (unsigned long long)w[i].ulPath, w[i].pszPath ? w[i].pszPath : "(null)",
-        hRaw && w[i].ulPath == hRaw ? " [rawFromMeshPose]" : "");
-  }
 
   Rigid R;
   if (!CurrentR(&R)) return orig(self, root, w, n);  // identity or no shm
@@ -240,12 +229,8 @@ uint32_t HookWritePathBatch(void* self, uint64_t root, PathWrite* w, uint32_t n)
     w[i].setError = copy[i].setError;
     w[i].errorOut = copy[i].errorOut;
   }
-  const uint64_t hits = g_hits.fetch_add(1, std::memory_order_relaxed) + 1;
-  const double now = MonotonicSeconds();
-  if (now >= g_nextHitLog) {
-    g_nextHitLog = now + 10.0;
-    Log("rawFromMeshPose rewrites: %llu total", (unsigned long long)hits);
-  }
+  if (!g_loggedFirstHit.exchange(true, std::memory_order_relaxed))
+    Log("rewriting rawFromMeshPose for the recline transform");
   return r;
 }
 
