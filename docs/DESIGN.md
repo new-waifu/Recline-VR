@@ -287,9 +287,6 @@ definition of the same name), which defaults to on for `linuxarm64` and off
 elsewhere:
 
 - the XRService passthrough shim and the driver's spawn injection that loads it;
-- linking the runtime's own `/opt/steamvr/bin/linuxarm64/libopenvr_api.so` in
-  place (off the Frame the SteamVR location varies, so the apps bundle a copy and
-  find it through an `$ORIGIN` runpath);
 - the overlay's hint about PC-side calibration while streaming.
 
 The pose hook, shared memory, recenter math, overlay and CLI are generic Linux

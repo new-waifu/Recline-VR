@@ -18,23 +18,21 @@ else()
 endif()
 
 # Steam Frame features: the XRService passthrough shim and the driver's spawn
-# injection that loads it, plus linking the runtime's fixed /opt/steamvr copy of
-# libopenvr_api.so. Off elsewhere (e.g. a Linux x86-64 PC): the pose hook, overlay
-# and CLI are generic.
+# injection that loads it. Off elsewhere (e.g. a Linux x86-64 PC): the pose hook,
+# overlay and CLI are generic.
 option(RECLINE_FRAME "Build the Steam Frame specific parts" ${FRAME_DEFAULT})
 option(RECLINE_BUILD_TESTS "Build host unit tests" ON)
 
-# OpenVR SDK headers, vendored and pinned (see THIRD_PARTY.md).
-set(OPENVR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openvr" CACHE PATH "Directory with openvr.h / openvr_driver.h")
-# Directory containing libopenvr_api.so. On the Frame the apps use the runtime's own
-# copy in place; elsewhere the install location varies, so it is bundled next to
-# the apps instead.
-if(RECLINE_FRAME)
-  set(OPENVR_LIB_DEFAULT "/opt/steamvr/bin/linuxarm64")
-else()
-  set(OPENVR_LIB_DEFAULT "$ENV{HOME}/.steam/steam/steamapps/common/SteamVR/bin/linux64")
-endif()
-set(OPENVR_LIB_DIR "${OPENVR_LIB_DEFAULT}" CACHE PATH "Directory with libopenvr_api.so")
+# OpenVR SDK, vendored and pinned (see THIRD_PARTY.md). Its own CMakeLists builds
+# the openvr_api loader as a static library, linked into the apps; the drivers and
+# the shim use only the headers.
+set(OPENVR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openvr/headers")
+set(USE_LIBCXX OFF CACHE BOOL "OpenVR SDK: build with libc++ under Clang")
+add_subdirectory(third_party/openvr EXCLUDE_FROM_ALL)
+# Upstream puts its outputs in its source tree, and expects C++11 (its own
+# -std=c++11 would lose to our CMAKE_CXX_STANDARD).
+set_target_properties(openvr_api PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/openvr
+                      CXX_STANDARD 11)
 
 find_package(Threads REQUIRED)
 
@@ -105,53 +103,32 @@ if(RECLINE_FRAME)
 endif()
 
 # --- apps -----------------------------------------------------------------------
-if(RECLINE_FRAME)
-  set(APP_RPATH "${OPENVR_LIB_DIR}")
-else()
-  set(APP_RPATH "$ORIGIN")
-endif()
+add_library(recline_client STATIC common/recline_client.cpp)
+target_include_directories(recline_client PUBLIC ${COMMON_INC})
+target_compile_options(recline_client PRIVATE ${WARN})
+target_link_libraries(recline_client PUBLIC recline_shm)
+
 function(recline_app target)
   add_executable(${target} ${ARGN})
   target_include_directories(${target} PRIVATE ${COMMON_INC})
   target_compile_options(${target} PRIVATE ${WARN})
-  target_link_directories(${target} PRIVATE ${OPENVR_LIB_DIR})
   target_link_libraries(${target} PRIVATE recline_client openvr_api Threads::Threads rt)
   target_link_options(${target} PRIVATE -static-libstdc++ -static-libgcc)
-  set_target_properties(${target} PROPERTIES
-    BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "${APP_RPATH}"
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stage)
+  set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stage)
 endfunction()
 
-# The apps need the runtime's libopenvr_api.so for the target architecture.
-# A host (x86-64) build without one still builds the drivers and the tests.
-find_library(OPENVR_API_LIB openvr_api PATHS ${OPENVR_LIB_DIR} NO_DEFAULT_PATH)
-if(OPENVR_API_LIB)
-  add_library(recline_client STATIC common/recline_client.cpp)
-  target_include_directories(recline_client PUBLIC ${COMMON_INC})
-  target_compile_options(recline_client PRIVATE ${WARN})
-  target_link_libraries(recline_client PUBLIC recline_shm)
-
-  recline_app(recline_overlay overlay/recline_overlay.cpp overlay/vk_texture.cpp)
-  target_include_directories(recline_overlay PRIVATE overlay)
-  if(Vulkan_FOUND)
-    target_link_libraries(recline_overlay PRIVATE Vulkan::Headers)
-    target_compile_definitions(recline_overlay PRIVATE RECLINE_HAVE_VULKAN)
-  else()
-    message(WARNING "Vulkan headers not found: the overlay will use SetOverlayRaw, which flickers")
-  endif()
-  if(RECLINE_FRAME)
-    target_compile_definitions(recline_overlay PRIVATE RECLINE_FRAME)
-  endif()
-  recline_app(reclinectl cli/reclinectl.cpp)
-  if(NOT RECLINE_FRAME)
-    file(COPY ${OPENVR_API_LIB} DESTINATION ${CMAKE_BINARY_DIR}/stage)
-  endif()
-elseif(RECLINE_FRAME)
-  message(FATAL_ERROR "libopenvr_api.so not found in OPENVR_LIB_DIR=${OPENVR_LIB_DIR}")
+recline_app(recline_overlay overlay/recline_overlay.cpp overlay/vk_texture.cpp)
+target_include_directories(recline_overlay PRIVATE overlay)
+if(Vulkan_FOUND)
+  target_link_libraries(recline_overlay PRIVATE Vulkan::Headers)
+  target_compile_definitions(recline_overlay PRIVATE RECLINE_HAVE_VULKAN)
 else()
-  message(WARNING "libopenvr_api.so not found in OPENVR_LIB_DIR=${OPENVR_LIB_DIR}: "
-                  "skipping recline_overlay and reclinectl")
+  message(WARNING "Vulkan headers not found: the overlay will use SetOverlayRaw, which flickers")
 endif()
+if(RECLINE_FRAME)
+  target_compile_definitions(recline_overlay PRIVATE RECLINE_FRAME)
+endif()
+recline_app(reclinectl cli/reclinectl.cpp)
 
 # --- staging ----------------------------------------------------------------------
 # ${CMAKE_BINARY_DIR}/stage is the complete install layout; its install.sh copies

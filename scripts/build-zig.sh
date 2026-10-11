@@ -3,21 +3,19 @@
 # alternative to building on the device with CMake. Produces the
 # same staged layout as the CMake build in $OUT (default: build-aarch64/stage).
 #
-#   ZIG=/path/to/zig OPENVR_LIB_DIR=../dev/opt/steamvr/bin/linuxarm64 \
-#     VULKAN_INC=/path/to/Vulkan-Headers/include scripts/build-zig.sh
+#   ZIG=/path/to/zig VULKAN_INC=/path/to/Vulkan-Headers/include scripts/build-zig.sh
 #
 # Zig links its own libc++ statically, so the outputs only need glibc.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ZIG=${ZIG:-zig}
 TARGET=${TARGET:-aarch64-linux-gnu.2.39}
-OPENVR_INC=${OPENVR_INC:-$ROOT/third_party/openvr}
-OPENVR_LIB_DIR=${OPENVR_LIB_DIR:-$ROOT/../dev/opt/steamvr/bin/linuxarm64}
+OVR=$ROOT/third_party/openvr
 OUT=${OUT:-$ROOT/build-aarch64/stage}
 # Zig doesn't search the host's /usr/include, so the overlay's Vulkan headers
 # (header-only use; libvulkan is dlopen'ed) must be given explicitly.
 VULKAN_INC=${VULKAN_INC:?set VULKAN_INC to a directory containing vulkan/vulkan.h}
-CXXFLAGS="-std=c++20 -O2 -g -Wall -Wextra -Wno-unused-parameter -DRECLINE_FRAME -I$ROOT/common -I$OPENVR_INC"
+CXXFLAGS="-std=c++20 -O2 -g -Wall -Wextra -Wno-unused-parameter -DRECLINE_FRAME -I$ROOT/common -I$OVR/headers"
 
 mkdir -p "$OUT/recline/bin/linuxarm64"
 cp -r "$ROOT/packaging/recline/." "$OUT/recline/"
@@ -32,18 +30,20 @@ driver() { # name sources...
     -Wl,--version-script="$ROOT/driver/exports.map" -Wl,-z,defs \
     -o "$OUT/$name/bin/linuxarm64/driver_$name.so" "$@" -lpthread -ldl -lrt
 }
-# libopenvr_api.so has no SONAME, so linking it directly would record its
-# build-host path in DT_NEEDED. Link against a stub with the same exports and
-# SONAME libopenvr_api.so instead; the device's real one is found via RPATH.
-STUB=$ROOT/build-aarch64/stub
-mkdir -p "$STUB"
-nm -D --defined-only "$OPENVR_LIB_DIR/libopenvr_api.so" | awk '$2 == "T" { print "void " $3 "(void) {}" }' > "$STUB/stub.c"
-"$ZIG" cc -target "$TARGET" -shared -fPIC -Wl,-soname,libopenvr_api.so -o "$STUB/libopenvr_api.so" "$STUB/stub.c"
+# The openvr_api loader, from the vendored SDK source with the flags its
+# CMakeLists uses on linuxarm64; linked statically into the apps.
+OVR_OBJ=$ROOT/build-aarch64/openvr
+mkdir -p "$OVR_OBJ"
+for f in "$OVR"/src/*.cpp "$OVR"/src/vrcore/*.cpp; do
+  "$ZIG" c++ -target "$TARGET" -std=c++11 -O2 -fPIC -fvisibility=hidden \
+    -DVR_API_PUBLIC -DLINUX -DPOSIX -DLINUXARM64 -DVRCORE_NO_PLATFORM \
+    -I"$OVR/src" -I"$OVR/src/vrcore" -I"$OVR/headers" -c "$f" -o "$OVR_OBJ/$(basename "$f" .cpp).o"
+done
 
 app() { # name sources...
   name=$1; shift
   "$ZIG" c++ -target "$TARGET" $CXXFLAGS -o "$OUT/$name" "$@" \
-    -L"$STUB" -lopenvr_api -Wl,-rpath,/opt/steamvr/bin/linuxarm64 -lpthread -lrt
+    "$OVR_OBJ"/*.o -ldl -lpthread -lrt
 }
 
 # The XRService passthrough shim: a shared lib exporting only

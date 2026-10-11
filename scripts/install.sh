@@ -25,8 +25,6 @@ if [ "$SRC" != "$DEST" ]; then
            bindings_frame_controller.json bindings_knuckles.json icon.png install.sh uninstall.sh; do
     put "$f"
   done
-  # Bundled by builds that don't use the runtime's own copy (off the Frame).
-  if [ -f "$SRC/libopenvr_api.so" ]; then put libopenvr_api.so; fi
 fi
 
 "$VRPATHREG" adddriver "$DEST/recline"
