@@ -155,7 +155,7 @@ bool PatchSlot(void** slot, void* expected, void* desired, std::string* err) {
   const size_t len = last + pg - first;
   const int origProt = m.Prot();
   if (!(origProt & PROT_WRITE) &&
-      mprotect(reinterpret_cast<void*>(first), len, PROT_READ | PROT_WRITE) != 0) {
+      mprotect(reinterpret_cast<void*>(first), len, origProt | PROT_WRITE) != 0) {
     *err = std::string("mprotect RW: ") + strerror(errno);
     return false;
   }
@@ -192,7 +192,8 @@ bool LocateVtableSlot(const void* obj, size_t index, const char* module, void***
            static_cast<void*>(vtbl), index, ms.perms, ms.path.c_str(), cur, mf.perms,
            mf.path.c_str());
   *info = buf;
-  if (ms.perms[0] != 'r' || ms.perms[2] == 'x' || ms.path.empty() || ms.path[0] != '/') {
+  // r-x is accepted too: another hooker may have mprotect'ed the page that way.
+  if (ms.perms[0] != 'r' || ms.perms[1] == 'w' || ms.path.empty() || ms.path[0] != '/') {
     *why = "vtable slot is not in a readonly file-backed image mapping";
     return false;
   }

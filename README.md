@@ -93,7 +93,8 @@ Vulkan when its headers are available at build time and falls back to
 
 Driver (`recline/resources/settings/default.vrsettings`, section `driver_recline`):
 
-- `loadPriority` (100): load before other drivers so their pose hooks wrap ours.
+- `loadPriority` (100000): load before other drivers (including Space Calibrator)
+  so their pose hooks wrap ours.
 - `debugPitchDeg` (0): apply a fixed pitch about the head at startup, for testing
   without the overlay.
 - `downstreamCheck` (true): periodically check that nothing modifies poses after us.
@@ -108,8 +109,10 @@ The driver logs to `~/.local/share/Steam/logs/vrserver.txt` with prefix `[reclin
 - `hook installed; chained to …`: working. `hook refused: …` explains why not.
 - `GetRawTrackedDevicePoses returns post-world-from-driver poses …`: the conflict
   check is usable; with `… driver-space poses` it disables itself.
-- `conflict: another hook wrapped ours …` / `… modified after our hook …`: another
-  tool (e.g. a calibrator) also hooks poses; see docs/DESIGN.md.
+- `another pose hook wraps ours …`: another tool (e.g. a calibrator) hooks poses
+  and runs before recline, which is the right order for a calibrator.
+  `conflict: … modified after our hook …`: something changes poses after recline;
+  see docs/DESIGN.md.
 
 If the overlay says the driver isn't loaded, check that SteamVR's safe mode hasn't
 disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driver.
@@ -149,8 +152,8 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
 - **Two pose hooks** (a temporary test driver applying a 10° yaw via the same slot),
   with a recline left in shared memory before each restart:
   - test driver loading first: we chain to it; `conflict_downstream` within ~7 s
-    (9.99° error), no `conflict_wrapped`.
-  - test driver loading after us: it chains to us; `conflict_wrapped` within ~1 s,
+    (9.99° error), not wrapped.
+  - test driver loading after us: it chains to us; `wrapped` within ~1 s,
     downstream check matches (0.02 mm).
   - after every restart the rotation was identity and old commands weren't replayed.
 - **SteamVR restart from the headset** ends vrserver without driver cleanup (Valve's

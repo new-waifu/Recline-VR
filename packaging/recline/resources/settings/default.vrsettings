@@ -1,7 +1,7 @@
 {
 	"driver_recline" : {
 		"enable" : true,
-		"loadPriority" : 100,
+		"loadPriority" : 100000,
 		"debugPitchDeg" : 0.0,
 		"downstreamCheck" : true
 	}

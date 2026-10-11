@@ -73,7 +73,7 @@ int Status() {
          s.flags & FLAG_HOOK_INSTALLED ? " hook_installed" : "",
          s.flags & FLAG_TRANSFORM_ACTIVE ? " transform_active" : "",
          s.flags & FLAG_CONFLICT_DOWNSTREAM ? " conflict_downstream" : "",
-         s.flags & FLAG_CONFLICT_WRAPPED ? " conflict_wrapped" : "",
+         s.flags & FLAG_WRAPPED ? " wrapped" : "",
          s.flags & FLAG_HOOK_REFUSED ? " hook_refused" : "");
   printf("hmd index:       %u\n", s.hmd_index);
   printf("pose_count:      %llu (%.0f Hz)\n", (unsigned long long)st.hmd.pose_count,

@@ -463,12 +463,12 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       if (now >= nextSlow) {
         nextSlow = now + 1.0;
         uint32_t flags = state_.flags;
-        // conflict_wrapped: someone replaced our slot entry, so their transform
-        // is applied before ours. Harmless, but reported.
+        // wrapped: someone replaced our slot entry, so their transform is applied
+        // before R. Expected (e.g. a calibrator), but reported.
         if (g_hookInstalled.load() && g_slot) {
           void* cur = __atomic_load_n(g_slot, __ATOMIC_RELAXED);
-          if (cur != reinterpret_cast<void*>(&PoseHook)) flags |= FLAG_CONFLICT_WRAPPED;
-          else flags &= ~FLAG_CONFLICT_WRAPPED;
+          if (cur != reinterpret_cast<void*>(&PoseHook)) flags |= FLAG_WRAPPED;
+          else flags &= ~FLAG_WRAPPED;
         }
         if (g_conflictDownstream.load(std::memory_order_relaxed)) flags |= FLAG_CONFLICT_DOWNSTREAM;
         else flags &= ~FLAG_CONFLICT_DOWNSTREAM;
@@ -481,10 +481,10 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
           stateDirty = true;
         }
         if (flags != lastLoggedFlags) {
-          if ((flags ^ lastLoggedFlags) & FLAG_CONFLICT_WRAPPED)
-            Log((flags & FLAG_CONFLICT_WRAPPED)
-                    ? "conflict: another hook wrapped ours (its transform applies before R)"
-                    : "conflict cleared: our hook is outermost again");
+          if ((flags ^ lastLoggedFlags) & FLAG_WRAPPED)
+            Log((flags & FLAG_WRAPPED)
+                    ? "another pose hook wraps ours (its transform applies before R)"
+                    : "no longer wrapped: our hook is outermost again");
           if ((flags ^ lastLoggedFlags) & FLAG_CONFLICT_DOWNSTREAM)
             Log((flags & FLAG_CONFLICT_DOWNSTREAM)
                     ? "conflict: HMD poses are modified after our hook (last err %.1f mm / %.2f deg)"

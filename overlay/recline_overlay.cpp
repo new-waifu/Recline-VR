@@ -498,8 +498,8 @@ class App {
     } else {
       line("Transform: none (normal tracking)", kDim);
     }
-    if (st.flags & FLAG_CONFLICT_WRAPPED)
-      line("Warning: another pose hook wraps ours (it applies before recline)", kWarn);
+    if (st.flags & FLAG_WRAPPED)
+      line("Another pose hook runs before recline (expected for calibrators)", kDim);
     if (st.flags & FLAG_CONFLICT_DOWNSTREAM)
       line("Warning: something modifies poses after recline", kWarn);
     if (active) {

@@ -48,8 +48,9 @@ that adds no devices and exists only to install that hook.
   pointer-to-member `&IVRServerDriverHost::TrackedDevicePoseUpdated` encodes the
   vtable offset (generic and ARM variants are both handled). Nothing is hardcoded.
 - Before writing, the slot and its current target are validated against
-  `/proc/self/maps`: the slot must sit in a read-only, file-backed image mapping and
-  the target in an executable one. Otherwise the hook is refused and reported.
+  `/proc/self/maps`: the slot must sit in a non-writable, file-backed image mapping
+  (`r--`, or `r-x` when another hooker left the page that way) and the target in an
+  executable one. Otherwise the hook is refused and reported.
 - The page is made writable only for an atomic compare-and-swap of the slot, then
   its original protection (read from `/proc/self/maps`) is restored.
 - The previous slot value is kept and always called. This chains with hooks
@@ -162,19 +163,32 @@ atomics don't work across processes.
 
 Other tools (e.g. Space Calibrator-style calibrators) may hook the same slot.
 
-- A driver's `loadPriority` decides `Init` order (higher loads earlier). We use 100,
-  so vtable hooks installed by drivers that load after us wrap ours: they run first,
-  and our R is applied on top of their result, which is what we want.
-- Hooks installed earlier, inline detours, or lazy hooks can still end up after us.
-  That can't be prevented without build-specific hooks, so it is detected instead:
-  - `conflict_wrapped`: about once a second, the driver re-reads the slot; if it no
-    longer points at our hook, someone wrapped us.
+- Every hook modifies its copy of the pose and then calls the previous slot value,
+  and the pose is passed by const reference, so the hook installed first applies its
+  transform last (outermost). We want to be that hook: a calibrator moving tracked
+  devices into the headset's space must run before R, giving `R ∘ Cal ∘ W`. The
+  other order, `Cal ∘ R ∘ W`, puts trackers calibrated while upright in the wrong
+  place once reclined.
+- A driver's `loadPriority` decides `Init` order (higher loads earlier). We use
+  100000, so hooks installed by drivers that load after us wrap ours.
+- Space Calibrator (the Linux build that runs on the Frame) loads with priority
+  9999. At `Init` it patches slot 0 (`GetGenericInterface`) of the driver context
+  vtable, which every driver's context shares, and hooks `TrackedDevicePoseUpdated`
+  the next time any driver asks for `IVRServerDriverHost_006`. Loading after it, we
+  would trigger that hook from our own `Init` and end up beneath it. Its `mprotect`
+  also leaves the vtable page `r-x`, which the slot check accepts.
+- Hooks from drivers with an even higher priority, or inline detours, can still
+  modify poses after us. That can't be prevented without build-specific hooks, so
+  the driver reports what it can see:
+  - `wrapped` (informational): about once a second, the driver re-reads the slot; if
+    it no longer points at our hook, a later hook runs before ours.
   - `conflict_downstream`: about once a second, after forwarding an HMD pose, the
     hook compares `GetRawTrackedDevicePoses` with `R ∘ H`. A persistent mismatch
     means poses are modified after us. On the Frame this API returns post-transform
     poses; if a runtime instead returned driver-space poses, the driver detects that
-    and disables the check rather than report false conflicts.
-- Both flags are shown in the overlay. The driver never unhooks itself because of them.
+    and disables the check rather than report false conflicts. Only the HMD is
+    checked, so a hook beneath us that moves only trackers goes unnoticed.
+- Both are shown in the overlay. The driver never unhooks itself because of them.
 - PC-side calibration (e.g. Space Calibrator on a streaming PC) is invalidated by a
   recenter; the overlay says so.
 

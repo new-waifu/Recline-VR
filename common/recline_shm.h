@@ -23,7 +23,7 @@ enum StateFlags : uint32_t {
   FLAG_HOOK_INSTALLED = 1u << 0,
   FLAG_TRANSFORM_ACTIVE = 1u << 1,
   FLAG_CONFLICT_DOWNSTREAM = 1u << 2,
-  FLAG_CONFLICT_WRAPPED = 1u << 3,
+  FLAG_WRAPPED = 1u << 3,
   FLAG_HOOK_REFUSED = 1u << 4,
 };
 
