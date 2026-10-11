@@ -1,27 +1,77 @@
 {
 	"controller_type": "knuckles",
-	"description": "Recline Recenter defaults: long-press to recenter / reset",
+	"description": "Recline Recenter defaults: right trigger + grip + A + B to recenter, same on the left hand to reset",
 	"name": "Recline Recenter defaults",
 	"bindings": {
 		"/actions/recline": {
 			"sources": [
 				{
-					"path": "/user/hand/right/input/b",
-					"mode": "button",
-					"inputs": {
-						"long": {
-							"output": "/actions/recline/in/recenter"
-						}
-					}
+					"path": "/user/hand/right/input/grip",
+					"mode": "trigger",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/right/input/trigger",
+					"mode": "trigger",
+					"inputs": {},
+					"parameters": {}
 				},
 				{
 					"path": "/user/hand/right/input/a",
 					"mode": "button",
-					"inputs": {
-						"long": {
-							"output": "/actions/recline/in/reset"
-						}
-					}
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/right/input/b",
+					"mode": "button",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/left/input/grip",
+					"mode": "trigger",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/left/input/trigger",
+					"mode": "trigger",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/left/input/a",
+					"mode": "button",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/left/input/b",
+					"mode": "button",
+					"inputs": {},
+					"parameters": {}
+				}
+			],
+			"chords": [
+				{
+					"output": "/actions/recline/in/recenter",
+					"inputs": [
+						[ "/user/hand/right/input/grip", "click" ],
+						[ "/user/hand/right/input/trigger", "click" ],
+						[ "/user/hand/right/input/a", "single" ],
+						[ "/user/hand/right/input/b", "single" ]
+					]
+				},
+				{
+					"output": "/actions/recline/in/reset",
+					"inputs": [
+						[ "/user/hand/left/input/grip", "click" ],
+						[ "/user/hand/left/input/trigger", "click" ],
+						[ "/user/hand/left/input/a", "single" ],
+						[ "/user/hand/left/input/b", "single" ]
+					]
 				}
 			],
 			"haptics": [
@@ -34,7 +84,6 @@
 					"path": "/user/hand/right/output/haptic"
 				}
 			],
-			"chords": [],
 			"poses": [],
 			"skeleton": []
 		}

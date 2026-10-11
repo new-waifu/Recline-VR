@@ -39,10 +39,12 @@ explains how and why.
 14° below the headset's nominal forward axis; the offset is read from SteamVR, so
 other headsets work too.
 
-**Controller shortcuts** (default bindings, changeable via the button above):
-long-press right **Y** to recenter, right **X** to reset (Valve Index: right **B** /
-**A**). They work while a game is running, which means those long-presses are taken
-from the game.
+**Controller shortcuts** (default bindings, changeable via the button above). On the
+right controller, hold **grip + trigger + bumper** and press **Y** to recenter, or
+**X** to reset. Valve Index: hold **grip + trigger** and press **A and B together**
+on the right controller to recenter, or on the left controller to reset. They are
+plain SteamVR chords that work while a game is running. Defaults are deliberately
+finger-twisting combinations that normal gameplay won't produce.
 
 **Command line** (`~/.local/share/recline-vr/reclinectl`):
 
@@ -131,7 +133,8 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
   (0.01 mm / 0.001°); with a 90° pitch, no downstream conflict is flagged.
 - **Performance:** `build/bench_hook` ≈ 92 ns per HMD pose.
 - **In headset:** world, controllers and overlay look right while reclined (no
-  flicker or swim). Overlay clicks, hover, controller long-presses and haptics work.
+  flicker or swim). Overlay clicks, hover, controller long-presses (the earlier
+  default bindings) and haptics work.
   `hellovr_vulkan` (standing): Full, Level only and eye height as expected.
   `helloxr --space Local` (seated, OpenXR): with the seated option on, recenter and
   reset both centre the Local origin on the head; with it off the origin stays put.

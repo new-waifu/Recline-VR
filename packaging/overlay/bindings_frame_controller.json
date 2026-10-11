@@ -1,27 +1,59 @@
 {
 	"controller_type": "frame_controller",
-	"description": "Recline Recenter defaults: long-press to recenter / reset",
+	"description": "Recline Recenter defaults: right grip + trigger + bumper + Y to recenter, + X to reset",
 	"name": "Recline Recenter defaults",
 	"bindings": {
 		"/actions/recline": {
 			"sources": [
 				{
+					"path": "/user/hand/right/input/grip",
+					"mode": "trigger",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/right/input/trigger",
+					"mode": "trigger",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/right/input/bumper",
+					"mode": "button",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
 					"path": "/user/hand/right/input/y",
 					"mode": "button",
-					"inputs": {
-						"long": {
-							"output": "/actions/recline/in/recenter"
-						}
-					}
+					"inputs": {},
+					"parameters": {}
 				},
 				{
 					"path": "/user/hand/right/input/x",
 					"mode": "button",
-					"inputs": {
-						"long": {
-							"output": "/actions/recline/in/reset"
-						}
-					}
+					"inputs": {},
+					"parameters": {}
+				}
+			],
+			"chords": [
+				{
+					"output": "/actions/recline/in/recenter",
+					"inputs": [
+						[ "/user/hand/right/input/grip", "click" ],
+						[ "/user/hand/right/input/trigger", "click" ],
+						[ "/user/hand/right/input/bumper", "single" ],
+						[ "/user/hand/right/input/y", "single" ]
+					]
+				},
+				{
+					"output": "/actions/recline/in/reset",
+					"inputs": [
+						[ "/user/hand/right/input/grip", "click" ],
+						[ "/user/hand/right/input/trigger", "click" ],
+						[ "/user/hand/right/input/bumper", "single" ],
+						[ "/user/hand/right/input/x", "single" ]
+					]
 				}
 			],
 			"haptics": [
@@ -34,7 +66,6 @@
 					"path": "/user/hand/right/output/haptic"
 				}
 			],
-			"chords": [],
 			"poses": [],
 			"skeleton": []
 		}
