@@ -323,7 +323,6 @@ constexpr double kValidateMaxSpreadDeg = 4.0;   // C drift allowed (head motion 
 constexpr double kValidateMaxOffsetM = 0.25;    // camera within this of the head
 constexpr double kValidateMinHeadTravelDeg = 10.0;
 constexpr double kValidateMaxHeadAgeS = 0.05;   // H must be this fresh
-constexpr int kValidateMaxWindows = 20;         // give up if never conclusive
 
 enum CameraState { kValidating, kActive, kDisabled };
 
@@ -384,12 +383,10 @@ void ValidateSample(uint32_t type, uint32_t cam, const float m[3][4]) {
   const Rigid H{Normalize(Quat{h.q[0], h.q[1], h.q[2], h.q[3]}), {h.t[0], h.t[1], h.t[2]}};
   const Rigid C = Compose(Inverse(H), RigidFromMatrix34(m));
 
-  if (g_val.samples == 0) {
-    for (bool& b : g_val.haveC) b = false;
-    g_val.refH = H;
-    g_val.good = 0;
-    g_val.headTravelDeg = g_val.maxSpreadDeg = g_val.maxOffsetM = 0;
-  }
+  // References persist across windows: C must stay constant for the whole
+  // validation, and head travel accumulates from the first sample.
+  if (g_val.windows == 0 && g_val.samples == 0) g_val.refH = H;
+  if (g_val.samples == 0) g_val.good = 0;
   if (!g_val.haveC[key]) {
     g_val.refC[key] = C;
     g_val.haveC[key] = true;
@@ -419,10 +416,10 @@ void ValidateSample(uint32_t type, uint32_t cam, const float m[3][4]) {
     Log("camera pose layout validated: cameras within %.1f cm of the head, spread %.1f deg "
         "over %.0f deg of head motion",
         g_val.maxOffsetM * 100, g_val.maxSpreadDeg, g_val.headTravelDeg);
-  } else if (g_val.windows >= kValidateMaxWindows) {
-    DisableCamera("head never moved enough to validate the camera pose");
   }
-  // else: consistent but the head was too still to tell; try another window.
+  // else: consistent so far but the head hasn't turned enough to tell a
+  // head-mounted pose from a fixed one; keep validating (frames pass through
+  // uncorrected meanwhile).
 }
 
 uint32_t HookSetFrameInfo(void* self, uint32_t type, uint32_t cam, uint32_t buf,
