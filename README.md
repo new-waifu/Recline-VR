@@ -83,10 +83,6 @@ The OpenVR SDK is vendored in `third_party/openvr`; the overlay and CLI link its
     cmake -S . -B build && cmake --build build -j && ctest --test-dir build
     build/stage/install.sh      # installs the staged layout
 
-Cross-build from a PC with Zig (pins glibc 2.39, links libc++ statically):
-
-    ZIG=/path/to/zig scripts/build-zig.sh        # -> build-aarch64/stage/
-
 The overlay uses Vulkan when its headers are available at build time and falls back
 to `SetOverlayRaw` otherwise.
 
