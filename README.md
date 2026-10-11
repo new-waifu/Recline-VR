@@ -80,5 +80,11 @@ and restart SteamVR: the world is pitched 90° about the head once the first HMD
   0.001° match), so the downstream check is active; with R = pitch 90° no conflict is
   flagged, i.e. vrserver honors the full rotation.
 - §10.8 perf: `build/bench_hook` ≈ 92 ns per HMD call (budget 2 µs).
-- Still open: in-headset visual checks (§10.2/§10.3), overlay UI + mouse Y, controller
-  bindings, streaming (§10.4), coexistence (§10.6), restart/reboot (§10.7).
+- §10.2 visual (in headset, hellovr_sdl + helloxr while reclined): controllers stay on
+  the hands, no flicker or obvious swim.
+- Overlay (Vulkan texture), clicks and controller long-presses work in headset.
+- Lens-centre recenter: the Frame's lens axis is ~14.4° below the head pose's forward
+  axis (asymmetric frustum); recenter levels the lens axis by default.
+- Passthrough is broken while reclined (both 3D and 2D room view); under investigation separately.
+- Still open: seated-app check (§10.3), haptics, streaming (§10.4), coexistence (§10.6),
+  restart/reboot (§10.7), safe-mode message, uninstall.
