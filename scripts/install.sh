@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs Recline Recenter for the current user. Run from the
+# Installs Recline VR for the current user. Run from the
 # directory produced by the build (it contains recline/, recline_overlay, ...).
 # Only touches $DEST and SteamVR's per-user registries; nothing in /opt.
 set -eu

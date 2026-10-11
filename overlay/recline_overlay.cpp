@@ -435,7 +435,7 @@ class App {
     hits_.clear();
     Canvas& c = canvas_;
     c.Clear(kBg);
-    c.Text(32, 22, "Recline Recenter", kBig, kText);
+    c.Text(32, 22, "Recline VR", kBig, kText);
 
     Button({32, 80, 470, 90}, "RECLINE RECENTER", kHitRecenter, false, kBig);
     Button({522, 80, 470, 90}, "Reset to normal", kHitReset, false, kBig);

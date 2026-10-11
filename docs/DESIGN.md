@@ -1,6 +1,6 @@
-# Recline Recenter: design notes
+# Recline VR: design notes
 
-How and why Recline Recenter works the way it does. Observations about SteamVR
+How and why Recline VR works the way it does. Observations about SteamVR
 internals were made on the Steam Frame's SteamVR build of October 2026. The pose
 hook deliberately depends only on the public, versioned OpenVR driver ABI, never
 on build-specific addresses or byte patterns. The passthrough fix is the one

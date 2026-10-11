@@ -9,7 +9,7 @@
 			"action_manifest_path" : "actions.json",
 			"strings" : {
 				"en_us" : {
-					"name" : "Recline Recenter",
+					"name" : "Recline VR",
 					"description" : "Recenter pitch, roll and yaw so you can use VR lying down"
 				}
 			}

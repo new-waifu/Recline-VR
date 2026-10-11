@@ -14,7 +14,7 @@
 	"localization" : [
 		{
 			"language_tag" : "en_US",
-			"/actions/recline" : "Recline Recenter",
+			"/actions/recline" : "Recline VR",
 			"/actions/recline/in/recenter" : "Recline recenter (current head pose becomes level/forward)",
 			"/actions/recline/in/reset" : "Reset recline to normal",
 			"/actions/recline/out/haptic" : "Confirmation pulse"

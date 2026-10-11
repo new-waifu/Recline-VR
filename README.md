@@ -1,4 +1,7 @@
-# Recline Recenter for SteamVR (Steam Frame)
+# Recline VR
+
+*Lie back and keep playing. Full pitch/roll recentering for SteamVR, built for the
+Steam Frame.*
 
 Use VR lying down or reclined. Press one button and the direction you are looking
 becomes level and forward in VR, at a chosen eye height. It works for native apps on
@@ -6,7 +9,7 @@ the Frame (OpenVR and OpenXR, standing and seated), and every tracked device mov
 together, so your hands stay attached. Reset puts everything back.
 
 SteamVR's own recenter can only turn you around (yaw), not tilt the world. Recline
-Recenter rotates the whole tracked world instead; [docs/DESIGN.md](docs/DESIGN.md)
+VR rotates the whole tracked world instead; [docs/DESIGN.md](docs/DESIGN.md)
 explains how and why.
 
 | Part | Path | What |

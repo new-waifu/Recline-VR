@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds Recline Recenter on the Frame and installs it for the current user:
+# Builds Recline VR on the Frame and installs it for the current user:
 #
 #   ./install.sh        then restart SteamVR
 #

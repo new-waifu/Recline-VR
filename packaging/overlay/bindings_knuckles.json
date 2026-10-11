@@ -1,7 +1,7 @@
 {
 	"controller_type": "knuckles",
-	"description": "Recline Recenter defaults: right trigger + grip + A + B to recenter, same on the left hand to reset",
-	"name": "Recline Recenter defaults",
+	"description": "Recline VR defaults: right trigger + grip + A + B to recenter, same on the left hand to reset",
+	"name": "Recline VR defaults",
 	"bindings": {
 		"/actions/recline": {
 			"sources": [

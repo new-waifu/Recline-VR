@@ -1,7 +1,7 @@
 {
 	"controller_type": "frame_controller",
-	"description": "Recline Recenter defaults: right grip + trigger + bumper + Y to recenter, + X to reset",
-	"name": "Recline Recenter defaults",
+	"description": "Recline VR defaults: right grip + trigger + bumper + Y to recenter, + X to reset",
+	"name": "Recline VR defaults",
 	"bindings": {
 		"/actions/recline": {
 			"sources": [
