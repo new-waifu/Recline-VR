@@ -167,4 +167,9 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
   `vrserver.txt`, no overlay process, shim mapped nowhere). The running overlay
   stays up until that restart. Deleting the install dir and reinstalling with
   `install.sh` restores everything.
+- **One-command install:** `./install.sh` in a fresh clone on the Frame builds
+  (about 6 s), passes the unit tests and installs over a running copy without
+  disturbing SteamVR or the overlay. After a restart the overlay auto-launches from
+  the `binary_path_linux_arm`-only manifest, the driver hooks, and the shim loads
+  only in XRService.
 - **Not yet tested:** the safe-mode message.
