@@ -1,8 +1,7 @@
 // Helpers for patching the shared IVRServerDriverHost vtable slot of
-// TrackedDevicePoseUpdated (SPEC §4.2). Shared by driver_recline and the
-// coexistence test driver. Nothing here is build-specific: the slot index is
-// derived from openvr_driver.h, and every address is validated against
-// /proc/self/maps before writing.
+// TrackedDevicePoseUpdated (SPEC §4.2). Nothing here is build-specific: the
+// slot index is derived from openvr_driver.h, and every address is validated
+// against /proc/self/maps before writing.
 #pragma once
 
 #include <openvr_driver.h>

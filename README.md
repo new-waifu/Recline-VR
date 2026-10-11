@@ -9,7 +9,6 @@ chosen origin, for native Frame apps and PC streaming alike.
 | `driver_recline.so` | `driver/` | Server driver, no devices. Hooks the shared `IVRServerDriverHost` vtable slot of `TrackedDevicePoseUpdated` and applies `pose' = R ∘ pose` to every device. |
 | `recline_overlay` | `overlay/` | Dashboard overlay (software-rendered), global input actions `recenter` / `reset`, haptics, `--register` / `--unregister`. |
 | `reclinectl` | `cli/` | `status`, `recenter`, `reset`, `set` over the same protocol. |
-| `driver_reclinetest.so` | `testdriver/` | Second vtable hook (fixed yaw/offset) for the §10.6 coexistence test. Not installed by default. |
 | protocol / math | `common/` | `/recline_v1` seqlock shared memory, rigid-transform math, §5.3 recenter math. |
 
 ## Build
@@ -98,7 +97,8 @@ and restart SteamVR: the world is pitched 90° about the head once the first HMD
 - §10.7 device reboot: driver registration in openvrpaths.vrpath survives, driver and
   overlay load at startup, R starts as identity; shutdown log shows "hook removed" then
   "[vrserver] Graceful exit".
-- §10.6 coexistence (driver_reclinetest, 10° yaw), both orders, each restart with a
+- §10.6 coexistence (a since-removed test driver with a second vtable hook applying a
+  10° yaw), both orders, each restart with a
   recline left active in /recline_v1:
   - test at loadPriority 200 (loads first): we chain to it; `conflict_downstream` raised
     within ~7 s (err 9.99°), no `conflict_wrapped`.

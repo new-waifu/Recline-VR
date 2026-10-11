@@ -11,7 +11,6 @@ endif()
 set(OPENVR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../openvr" CACHE PATH "Directory with openvr.h / openvr_driver.h")
 # Directory containing libopenvr_api.so (the device's own copy by default).
 set(OPENVR_LIB_DIR "/opt/steamvr/bin/linuxarm64" CACHE PATH "Directory with libopenvr_api.so")
-option(RECLINE_BUILD_TESTDRIVER "Build the coexistence test driver (SPEC §10.6)" ON)
 option(RECLINE_BUILD_TESTS "Build host unit tests" ON)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
@@ -46,9 +45,6 @@ function(recline_driver target name)
 endfunction()
 
 recline_driver(driver_recline recline driver/driver_recline.cpp)
-if(RECLINE_BUILD_TESTDRIVER)
-  recline_driver(driver_reclinetest reclinetest testdriver/driver_reclinetest.cpp)
-endif()
 
 # --- apps -----------------------------------------------------------------------
 function(recline_app target)
@@ -84,9 +80,6 @@ install(PROGRAMS scripts/install.sh scripts/uninstall.sh DESTINATION .)
 # Stage the non-binary files next to the build outputs too, so the build dir
 # itself is a runnable layout.
 file(COPY packaging/recline/ DESTINATION ${CMAKE_BINARY_DIR}/stage/recline)
-if(RECLINE_BUILD_TESTDRIVER)
-  file(COPY packaging/reclinetest/ DESTINATION ${CMAKE_BINARY_DIR}/stage/reclinetest)
-endif()
 file(COPY packaging/overlay/ scripts/install.sh scripts/uninstall.sh DESTINATION ${CMAKE_BINARY_DIR}/stage)
 
 # --- host unit tests (math + seqlock protocol; no SteamVR needed) ------------------

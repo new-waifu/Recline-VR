@@ -15,9 +15,8 @@ OPENVR_LIB_DIR=${OPENVR_LIB_DIR:-$ROOT/../dev/opt/steamvr/bin/linuxarm64}
 OUT=${OUT:-$ROOT/build-aarch64/stage}
 CXXFLAGS="-std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -I$ROOT/common -I$OPENVR_INC"
 
-mkdir -p "$OUT/recline/bin/linuxarm64" "$OUT/reclinetest/bin/linuxarm64"
+mkdir -p "$OUT/recline/bin/linuxarm64"
 cp -r "$ROOT/packaging/recline/." "$OUT/recline/"
-cp -r "$ROOT/packaging/reclinetest/." "$OUT/reclinetest/"
 cp "$ROOT"/packaging/overlay/* "$ROOT"/scripts/install.sh "$ROOT"/scripts/uninstall.sh "$OUT/"
 
 driver() { # name source
@@ -41,7 +40,6 @@ app() { # name sources...
 }
 
 driver recline "$ROOT/driver/driver_recline.cpp"
-driver reclinetest "$ROOT/testdriver/driver_reclinetest.cpp"
 app recline_overlay -I"$ROOT/overlay" "$ROOT/overlay/recline_overlay.cpp"
 app reclinectl "$ROOT/cli/reclinectl.cpp"
 echo "built into $OUT"

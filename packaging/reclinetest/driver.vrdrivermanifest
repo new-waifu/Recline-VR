@@ -1,7 +1,0 @@
-{
-	"name" : "reclinetest",
-	"directory" : "",
-	"alwaysActivate" : true,
-	"resourceOnly" : false,
-	"hmd_presence" : []
-}
