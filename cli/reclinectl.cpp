@@ -30,6 +30,8 @@ void Usage() {
           "          head pose's forward axis instead)\n"
           "       reclinectl reset [--no-seated-reset]\n"
           "       reclinectl poses        (HMD/controller poses as apps see them)\n"
+          "       reclinectl setting get <section> <key>\n"
+          "       reclinectl setting set <section> <key> <bool|int|float|string>\n"
           "       reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   (degrees, meters)\n");
 }
 
@@ -281,6 +283,63 @@ int Poses() {
   return 0;
 }
 
+// Debug access to SteamVR settings (IVRSettings), for experiments.
+int Setting(int argc, char** argv) {
+  if (argc < 3 || (std::string(argv[0]) == "set" && argc < 4)) {
+    Usage();
+    return 2;
+  }
+  vr::EVRInitError e = vr::VRInitError_None;
+  vr::VR_Init(&e, vr::VRApplication_Utility);
+  if (e != vr::VRInitError_None) {
+    fprintf(stderr, "error: VR_Init: %s\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
+    return 1;
+  }
+  auto* st = vr::VRSettings();
+  const char* sec = argv[1];
+  const char* key = argv[2];
+  vr::EVRSettingsError se = vr::VRSettingsError_None;
+  int rc = 0;
+  if (std::string(argv[0]) == "get") {
+    char buf[1024] = {};
+    st->GetString(sec, key, buf, sizeof buf, &se);
+    if (se == vr::VRSettingsError_None) printf("string: %s\n", buf);
+    se = vr::VRSettingsError_None;
+    const bool b = st->GetBool(sec, key, &se);
+    if (se == vr::VRSettingsError_None) printf("bool:   %s\n", b ? "true" : "false");
+    se = vr::VRSettingsError_None;
+    const int32_t i = st->GetInt32(sec, key, &se);
+    if (se == vr::VRSettingsError_None) printf("int:    %d\n", i);
+    se = vr::VRSettingsError_None;
+    const float f = st->GetFloat(sec, key, &se);
+    if (se == vr::VRSettingsError_None) printf("float:  %g\n", f);
+    else printf("(last error: %s)\n", st->GetSettingsErrorNameFromEnum(se));
+  } else if (std::string(argv[0]) == "set") {
+    const std::string v = argv[3];
+    char* end;
+    if (v == "true" || v == "false") {
+      st->SetBool(sec, key, v == "true", &se);
+    } else if (strtol(v.c_str(), &end, 10), *end == 0) {
+      st->SetInt32(sec, key, int32_t(strtol(v.c_str(), nullptr, 10)), &se);
+    } else if (strtod(v.c_str(), &end), *end == 0) {
+      st->SetFloat(sec, key, float(strtod(v.c_str(), nullptr)), &se);
+    } else {
+      st->SetString(sec, key, v.c_str(), &se);
+    }
+    if (se != vr::VRSettingsError_None) {
+      fprintf(stderr, "error: %s\n", st->GetSettingsErrorNameFromEnum(se));
+      rc = 1;
+    } else {
+      printf("set %s.%s = %s\n", sec, key, v.c_str());
+    }
+  } else {
+    Usage();
+    rc = 2;
+  }
+  vr::VR_Shutdown();
+  return rc;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -294,6 +353,7 @@ int main(int argc, char** argv) {
   if (c == "reset") return Reset(argc - 2, argv + 2);
   if (c == "set") return Set(argc - 2, argv + 2);
   if (c == "poses") return Poses();
+  if (c == "setting") return Setting(argc - 2, argv + 2);
   Usage();
   return 2;
 }
