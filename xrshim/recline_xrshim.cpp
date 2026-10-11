@@ -1,27 +1,8 @@
-// recline_xrshim: a shared library loaded (via LD_PRELOAD) into the Frame's
-// XRService process ONLY, by the driver's targeted spawn hook. XRService draws
-// the passthrough ("constructed room view") camera image onto a 3D room mesh
-// whose pose it writes as the vrpaths property /meshData/rawFromMeshPose. That
-// pose is in the pre-R "raw" driver-world frame, but the compositor renders the
-// mesh with the HMD pose, which the driver's recline transform R has already
-// rotated. The two disagree, so passthrough no longer lines up with reality.
-//
-// This shim closes the gap at the source: it hooks IVRPaths::WritePathBatch in
-// XRService and rewrites rawFromMeshPose to R ∘ pose as it is written, using
-// the same R the driver reads from /recline_v1. XRService also publishes each
-// passthrough camera frame's world-from-camera pose (same pre-R frame) through
-// IVRCameraPassthroughInternal; that pose gets the same R, so the camera image
-// is projected onto the mesh from where the camera really is. Everything else
-// passes through untouched. It fails safe: if anything about the process, the
-// interface version, or the shared memory is not exactly as expected, it does
-// nothing and forwards every call unchanged. docs/DESIGN.md ("Passthrough")
-// explains why the fix lives here and how injection is kept out of games.
-//
-// It relies on two public exported symbols (VR_GetGenericInterface, VRPaths)
-// plus internal-but-versioned details of this SteamVR build: the IVRPaths_002
-// vtable layout (slot 1 = WritePathBatch, slot 2 = StringToHandle), the
-// PathWrite_t struct layout, and IVRCameraPassthroughInternal_001 slot 5 with
-// its frame-info layout. All are guarded; a mismatch leaves calls unchanged.
+// recline_xrshim: loaded (via LD_PRELOAD) into the Frame's XRService only, by
+// the driver's spawn injection. It rewrites the passthrough mesh pose and the
+// camera frame poses XRService publishes to R ∘ pose; every other call passes
+// through untouched, and any unexpected process, interface version or layout
+// leaves it a pure forwarder. docs/DESIGN.md, "Passthrough", has the why.
 
 #include <atomic>
 #include <cmath>
@@ -315,22 +296,12 @@ void Install(void* obj) {
 }
 
 // ---------------------------------------------------------------------------
-// Passthrough camera frames. XRService owns the cameras and publishes each
-// frame's metadata to the compositor through IVRCameraPassthroughInternal_001
-// slot 5: (cameraType, cameraIndex, bufferIndex, const info*), which copies
-// kCameraInfoSize bytes of `info` into the shared passthrough state. The
-// world-from-camera pose in it (row-major 3x4 at +0x30) is in the same pre-R
-// frame as rawFromMeshPose, so it gets the same R; otherwise the compositor
-// projects the camera image onto the (corrected) mesh from the wrong place.
-//
-// Both numbers are internal to this SteamVR build, so neither is trusted:
-//  - at install, vrclient's slot-5 code must copy exactly kCameraInfoSize bytes
-//    (its memcpy size immediate is read back from the instruction stream);
-//  - before the first rewrite, the matrix must behave like a head-mounted
-//    camera's pose: C = inv(H)·M, with H the pre-R head pose the driver
-//    publishes, must stay constant (cameras are rigidly mounted) and small in
-//    translation while the head turns by at least kValidateMinHeadTravelDeg.
-// Any mismatch disables the camera hook for the life of the process.
+// Passthrough camera frames: IVRCameraPassthroughInternal_001 slot 5,
+// (cameraType, cameraIndex, bufferIndex, const info*), copies kCameraInfoSize
+// bytes of `info`, whose world-from-camera pose is a row-major 3x4 at
+// kWorldFromCameraOffset. Neither constant is trusted: the copy size is read
+// back from vrclient's code at install, and the pose is validated as
+// head-mounted (C = inv(H)·M constant per camera) before the first rewrite.
 
 constexpr const char* kCameraPassthroughVersion = "IVRCameraPassthroughInternal_001";
 constexpr size_t kSetFrameInfoSlot = 5;

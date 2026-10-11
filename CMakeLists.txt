@@ -56,7 +56,7 @@ recline_driver(driver_recline recline driver/driver_recline.cpp common/slot_patc
 
 # --- XRService passthrough shim ---------------------------------------------
 # Loaded into XRService only (via the driver's targeted spawn injection) to
-# correct the room-view mesh pose for the recline transform. Resolves
+# correct the passthrough mesh and camera poses for the recline transform. Resolves
 # VR_GetGenericInterface / VRPaths at runtime via RTLD_NEXT, so it must NOT
 # link libopenvr_api. Ships next to the driver .so.
 add_library(recline_xrshim SHARED xrshim/recline_xrshim.cpp common/slot_patch.cpp

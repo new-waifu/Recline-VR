@@ -1,11 +1,7 @@
 // Shared-memory protocol /recline_v1 between driver_recline and its clients
-// (recline_overlay, reclinectl). See docs/DESIGN.md, "Shared-memory protocol".
-//
-// Every block is a seqlock. All accesses to the seq word *and* the payload go
-// through the __atomic builtins (payload: relaxed; ordering comes from the
-// seq accesses and explicit fences), so there is no data race even on torn
-// reads. Doubles are accessed with the generic __atomic_load/__atomic_store
-// builtins, which are plain lock-free 64-bit loads/stores on aarch64/x86-64.
+// (recline_overlay, reclinectl, the XRService shim); see docs/DESIGN.md,
+// "Shared-memory protocol". Doubles go through the generic __atomic_load /
+// __atomic_store builtins, plain lock-free 64-bit accesses on aarch64/x86-64.
 #pragma once
 
 #include <cstddef>

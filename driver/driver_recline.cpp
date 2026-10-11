@@ -66,16 +66,9 @@ std::atomic<bool> g_downstreamCheckEnabled{true};
 void** g_slot = nullptr;  // &vtbl[index of TrackedDevicePoseUpdated]
 
 // ---------------------------------------------------------------------------
-// In-process R: seqlocked, single writer (command thread), readers are hook
-// threads. The hook never reads R from shared memory.
-//
-// The hot-path reader is bounded and must never block. The textbook fallback
-// for a reader that keeps losing races would be a thread_local "last good R",
-// but a thread_local in a dlopen'ed module may allocate on first access per
-// thread (dynamic TLS), which the hot path must not do. Instead R is kept in
-// two seqlocked copies that the writer updates one after the other, so at any
-// instant at least one copy is stable; a reader that fails on one copy reads
-// the other. Same protocol, no TLS, never blocks.
+// In-process R: two seqlocked copies, written one after the other by the
+// command thread, so a bounded hot-path reader that loses on one copy can read
+// the other (docs/DESIGN.md, "Hot-path reads of R").
 struct alignas(64) LocalR {
   uint32_t seq;
   uint32_t identity;  // payload: 1 if R is identity (fast path)
@@ -438,10 +431,9 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       MaybeInjectSpawn();
 
       if (shm_) {
-        // Crashed CmdBlock writer recovery: the only cross-writer recovery. A seq that stays at the same odd value for > 1 s belongs to
-        // a writer that died mid-write; force it to the next even value. The
-        // (possibly torn) payload is then read as a normal command and
-        // validated like any other.
+        // Crashed-writer recovery: release a seq stuck at the same odd value
+        // for > 1 s; the (possibly torn) payload is then validated like any
+        // other command.
         const uint32_t s = __atomic_load_n(&shm_->cmd.seq, __ATOMIC_RELAXED);
         if (s & 1u) {
           if (s != staleSeq) {
