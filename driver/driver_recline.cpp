@@ -24,7 +24,8 @@
 #include "recline_math.h"
 #include "pose_math.h"
 #include "recline_shm.h"
-#include "vtable_patch.h"
+#include "slot_patch.h"
+#include "spawn_inject.h"
 
 #define RECLINE_EXPORT extern "C" __attribute__((visibility("default")))
 
@@ -230,7 +231,8 @@ bool InstallHook(vr::IVRServerDriverHost* host, std::string* why) {
   void** slot;
   void* cur;
   std::string info;
-  const bool located = LocateSlot(host, &slot, &cur, why, &info);
+  const size_t idx = VirtualSlotIndex(&vr::IVRServerDriverHost::TrackedDevicePoseUpdated);
+  const bool located = LocateVtableSlot(host, idx, nullptr, &slot, &cur, why, &info);
   if (!info.empty()) Log("%s", info.c_str());
   if (!located) return false;
   if (cur == reinterpret_cast<void*>(&PoseHook)) {
@@ -267,6 +269,17 @@ void PinSelf() {
     Log("pinned %s", info.dli_fname);
 }
 
+// Absolute path to the XRService shim, which ships next to this driver .so
+// (.../recline/bin/linuxarm64/librecline_xrshim.so). Empty if undeterminable.
+std::string ShimPath() {
+  Dl_info info{};
+  if (!dladdr(reinterpret_cast<void*>(&PoseHook), &info) || !info.dli_fname) return {};
+  std::string p = info.dli_fname;
+  const size_t slash = p.rfind('/');
+  if (slash == std::string::npos) return {};
+  return p.substr(0, slash + 1) + "librecline_xrshim.so";
+}
+
 // ---------------------------------------------------------------------------
 // Driver provider
 
@@ -276,6 +289,7 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     VR_INIT_SERVER_DRIVER_CONTEXT(ctx);
     Log("driver_recline init (shm v%u)", kVersion);
     PinSelf();
+    shimPath_ = ShimPath();
 
     vr::EVRSettingsError se = vr::VRSettingsError_None;
     debugPitchDeg_ = vr::VRSettings()->GetFloat(kSection, "debugPitchDeg", &se);
@@ -398,6 +412,18 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     }
   }
 
+  // Install the targeted XRService spawn injection as soon as
+  // libArcturusPerception (driver_cv's dependency, which spawns XRService) is
+  // loaded. It isn't present yet at our Init, so the command thread polls for
+  // it; the GOT hook then persists across XRService restarts.
+  void MaybeInjectSpawn() {
+    if (spawnInjectDone_ || shimPath_.empty()) return;
+    if (!ModuleLoaded("libArcturusPerception.so")) return;
+    const int n = InstallSpawnInjection(shimPath_, [](const std::string& m) { Log("%s", m.c_str()); });
+    spawnInjectDone_ = true;  // one attempt once the module is present
+    Log("spawn injection: %d/3 spawn functions hooked (shim %s)", n, shimPath_.c_str());
+  }
+
   void CommandThread() {
     double nextSlow = 0, staleSince = 0;
     uint32_t staleSeq = 0;
@@ -406,6 +432,8 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     while (running_.load(std::memory_order_relaxed)) {
       const double now = MonotonicSeconds();
       bool stateDirty = false;
+
+      MaybeInjectSpawn();
 
       if (shm_) {
         // Crashed CmdBlock writer recovery: the only cross-writer recovery. A seq that stays at the same odd value for > 1 s belongs to
@@ -586,6 +614,8 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
   StateSnapshot state_;
   uint32_t lastCmdId_ = 0;
   double debugPitchDeg_ = 0;
+  std::string shimPath_;
+  bool spawnInjectDone_ = false;
   bool hmdVerified_ = false;
   double nextResolve_ = 0;
   std::atomic<bool> running_{false};

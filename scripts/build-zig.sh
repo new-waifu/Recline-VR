@@ -40,9 +40,21 @@ app() { # name sources...
     -L"$STUB" -lopenvr_api -Wl,-rpath,/opt/steamvr/bin/linuxarm64 -lpthread -lrt
 }
 
+# The XRService passthrough shim: a shared lib exporting only
+# VR_GetGenericInterface / VRPaths, resolving the real ones via RTLD_NEXT (so it
+# does not link libopenvr_api). Ships next to the driver .so.
+shim() {
+  "$ZIG" c++ -target "$TARGET" $CXXFLAGS -I"$ROOT/driver" -fPIC -shared \
+    -fvisibility=hidden -fvisibility-inlines-hidden \
+    -Wl,--version-script="$ROOT/xrshim/exports.map" -Wl,-z,defs \
+    -o "$OUT/recline/bin/linuxarm64/librecline_xrshim.so" "$@" -lpthread -ldl -lrt
+}
+
 SHM="$ROOT/common/recline_shm.cpp"
 CLIENT="$ROOT/common/recline_client.cpp"
-driver recline "$ROOT/driver/driver_recline.cpp" "$ROOT/driver/vtable_patch.cpp" "$SHM"
+driver recline "$ROOT/driver/driver_recline.cpp" "$ROOT/common/slot_patch.cpp" \
+  "$ROOT/driver/spawn_inject.cpp" "$SHM"
+shim "$ROOT/xrshim/recline_xrshim.cpp" "$ROOT/common/slot_patch.cpp" "$SHM"
 app recline_overlay -I"$ROOT/overlay" "$ROOT/overlay/recline_overlay.cpp" \
   "$ROOT/overlay/vk_texture.cpp" "$CLIENT" "$SHM"
 app reclinectl "$ROOT/cli/reclinectl.cpp" "$CLIENT" "$SHM"

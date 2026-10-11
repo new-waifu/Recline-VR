@@ -51,7 +51,25 @@ function(recline_driver target name)
   install(DIRECTORY packaging/${name}/ DESTINATION ${name})
 endfunction()
 
-recline_driver(driver_recline recline driver/driver_recline.cpp driver/vtable_patch.cpp)
+recline_driver(driver_recline recline driver/driver_recline.cpp common/slot_patch.cpp
+               driver/spawn_inject.cpp)
+
+# --- XRService passthrough shim ---------------------------------------------
+# Loaded into XRService only (via the driver's targeted spawn injection) to
+# correct the room-view mesh pose for the recline transform. Resolves
+# VR_GetGenericInterface / VRPaths at runtime via RTLD_NEXT, so it must NOT
+# link libopenvr_api. Ships next to the driver .so.
+add_library(recline_xrshim SHARED xrshim/recline_xrshim.cpp common/slot_patch.cpp
+            common/recline_shm.cpp)
+target_include_directories(recline_xrshim PRIVATE ${COMMON_INC} ${CMAKE_CURRENT_SOURCE_DIR}/driver)
+target_compile_options(recline_xrshim PRIVATE ${WARN} -fvisibility=hidden -fvisibility-inlines-hidden)
+target_link_options(recline_xrshim PRIVATE -static-libstdc++ -static-libgcc ${DRIVER_EXTRA_LINK}
+                    -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/xrshim/exports.map -Wl,-z,defs)
+target_link_libraries(recline_xrshim PRIVATE pthread dl rt)
+set_target_properties(recline_xrshim PROPERTIES OUTPUT_NAME recline_xrshim
+  POSITION_INDEPENDENT_CODE ON
+  LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stage/recline/bin/${VR_PLATFORM})
+install(TARGETS recline_xrshim LIBRARY DESTINATION recline/bin/${VR_PLATFORM})
 
 # --- apps -----------------------------------------------------------------------
 function(recline_app target)

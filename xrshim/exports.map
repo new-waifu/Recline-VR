@@ -1,0 +1,4 @@
+{
+  global: VR_GetGenericInterface; VRPaths;
+  local: *;
+};
