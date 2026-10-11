@@ -92,5 +92,7 @@ and restart SteamVR: the world is pitched 90° about the head once the first HMD
   and reset both put the Local origin at the head; with it off the origin stays put.
   (hellovr_sdl needs libGLEW.so.2.1, absent on the Frame; use
   /opt/steamvr/tools/hellovr_vulkan_linux. helloxr exits on stdin EOF.)
-- Still open: streaming (§10.4), coexistence (§10.6),
-  restart/reboot (§10.7), safe-mode message, uninstall.
+- §10.7 device reboot: driver registration in openvrpaths.vrpath survives, driver and
+  overlay load at startup, R starts as identity; shutdown log shows "hook removed" then
+  "[vrserver] Graceful exit".
+- Still open: streaming (§10.4), coexistence (§10.6), safe-mode message, uninstall.
