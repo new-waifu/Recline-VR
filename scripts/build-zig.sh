@@ -10,7 +10,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ZIG=${ZIG:-zig}
 TARGET=${TARGET:-aarch64-linux-gnu.2.39}
-OPENVR_INC=${OPENVR_INC:-$ROOT/../openvr}
+OPENVR_INC=${OPENVR_INC:-$ROOT/third_party/openvr}
 OPENVR_LIB_DIR=${OPENVR_LIB_DIR:-$ROOT/../dev/opt/steamvr/bin/linuxarm64}
 OUT=${OUT:-$ROOT/build-aarch64/stage}
 CXXFLAGS="-std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -I$ROOT/common -I$OPENVR_INC"

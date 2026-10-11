@@ -7,12 +7,19 @@ SRC=$(cd "$(dirname "$0")" && pwd)
 DEST=${DEST:-$HOME/.local/share/recline-vr}
 VRPATHREG=/opt/steamvr/bin/linuxarm64/vrpathreg
 
+# Replace each file by rename, never in place: on an update the driver and shim
+# are mapped by SteamVR and the overlay binary is running.
+put() { # relative path
+  mkdir -p "$(dirname "$DEST/$1")"
+  cp -p "$SRC/$1" "$DEST/$1.new.$$"
+  mv -f "$DEST/$1.new.$$" "$DEST/$1"
+}
+
 if [ "$SRC" != "$DEST" ]; then
-  mkdir -p "$DEST"
-  cp -r "$SRC/recline" "$DEST/"
+  (cd "$SRC" && find recline -type f) | while read -r f; do put "$f"; done
   for f in recline_overlay reclinectl recline_overlay.vrmanifest actions.json \
            bindings_frame_controller.json bindings_knuckles.json install.sh uninstall.sh; do
-    cp "$SRC/$f" "$DEST/"
+    put "$f"
   done
 fi
 

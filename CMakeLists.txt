@@ -7,8 +7,8 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-# OpenVR headers (openvr.h, openvr_driver.h).
-set(OPENVR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../openvr" CACHE PATH "Directory with openvr.h / openvr_driver.h")
+# OpenVR SDK headers, vendored and pinned (see THIRD_PARTY.md).
+set(OPENVR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openvr" CACHE PATH "Directory with openvr.h / openvr_driver.h")
 # Directory containing libopenvr_api.so (the device's own copy by default).
 set(OPENVR_LIB_DIR "/opt/steamvr/bin/linuxarm64" CACHE PATH "Directory with libopenvr_api.so")
 option(RECLINE_BUILD_TESTS "Build host unit tests" ON)

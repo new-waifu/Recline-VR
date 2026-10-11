@@ -55,13 +55,30 @@ produce.
     reclinectl bindings                    # open the binding editor in the headset
     reclinectl setting get|set|remove <section> <key> [value]  # SteamVR settings, for experiments
 
+## Install / uninstall
+
+On the Frame (it ships with CMake and a compiler), with SteamVR running, from a
+clone of this repository:
+
+    ./install.sh        # builds, runs the unit tests, installs to ~/.local/share/recline-vr
+    # restart SteamVR, then:
+    ~/.local/share/recline-vr/reclinectl status
+
+Everything goes into your home directory; nothing in `/opt` is touched. To update,
+pull and run `./install.sh` again, then restart SteamVR.
+
+Uninstall (SteamVR running):
+
+    ~/.local/share/recline-vr/uninstall.sh   # unregisters overlay and driver
+    # restart SteamVR, then delete ~/.local/share/recline-vr (optionally /dev/shm/recline_v1)
+
 ## Build
 
-On the Frame, from a copy of this directory with the OpenVR headers in `../openvr`
-(or pass `-DOPENVR_INCLUDE_DIR=...`):
+The OpenVR SDK headers are vendored in `third_party/openvr`. The overlay and CLI link
+the runtime's own `libopenvr_api.so` from `/opt/steamvr`. By hand:
 
     cmake -S . -B build && cmake --build build -j && ctest --test-dir build
-    # installable layout: build/stage/
+    build/stage/install.sh      # installs the staged layout
 
 Cross-build from a PC with Zig (pins glibc 2.39, links libc++ statically):
 
@@ -71,20 +88,6 @@ x86-64 CMake builds compile the driver and run the unit tests; the overlay and C
 skipped unless `OPENVR_LIB_DIR` has a matching `libopenvr_api.so`. The overlay uses
 Vulkan when its headers are available at build time and falls back to
 `SetOverlayRaw` otherwise.
-
-## Install / uninstall
-
-Everything goes into your home directory; nothing in `/opt` is touched. With SteamVR
-running, from the staged directory:
-
-    ./install.sh        # copies to ~/.local/share/recline-vr, registers driver and overlay
-    # restart SteamVR, then:
-    ~/.local/share/recline-vr/reclinectl status
-
-Uninstall (SteamVR running):
-
-    ~/.local/share/recline-vr/uninstall.sh   # unregisters overlay and driver
-    # restart SteamVR, then delete ~/.local/share/recline-vr (optionally /dev/shm/recline_v1)
 
 ## Settings
 
