@@ -172,15 +172,45 @@ void ApplyRToMatrix34(const Rigid& R, float m[3][4]) {
 // The WritePathBatch hook. Signature mirrors the vrclient method:
 // int WritePathBatch(void* self, uint64_t root, PathWrite* w, uint32_t n).
 using WriteFn = uint32_t (*)(void*, uint64_t, PathWrite*, uint32_t);
+// Slot 2: StringToHandle(PathHandle_t* out, const char* path) -> error code.
+using StringToHandleFn = uint32_t (*)(void*, uint64_t*, const char*);
 std::atomic<WriteFn> g_origWrite{nullptr};
+std::atomic<StringToHandleFn> g_stringToHandle{nullptr};
+
+// XRService writes by handle (ulPath), resolved once via StringToHandle; the
+// string is only consulted when ulPath is 0. Resolved lazily on the first hook
+// call, outside any vrclient lock.
+std::atomic<uint64_t> g_hRaw{0};
+std::atomic<bool> g_hRawTried{false};
+
+void ResolveRawHandle(void* self) {
+  if (g_hRawTried.exchange(true, std::memory_order_acq_rel)) return;
+  const StringToHandleFn fn = g_stringToHandle.load(std::memory_order_acquire);
+  uint64_t h = 0;
+  const uint32_t err = fn ? fn(self, &h, kRawFromMeshPose) : ~0u;
+  g_hRaw.store(err == 0 ? h : 0, std::memory_order_release);
+  Log("StringToHandle(%s) = 0x%llx (err %u)", kRawFromMeshPose, (unsigned long long)h, err);
+}
 
 std::atomic<uint64_t> g_hits{0};
 double g_nextHitLog = 0;
+std::atomic<int> g_matrixWritesLogged{0};
 
 uint32_t HookWritePathBatch(void* self, uint64_t root, PathWrite* w, uint32_t n) {
   const WriteFn orig = g_origWrite.load(std::memory_order_acquire);
   if (!g_active.load(std::memory_order_relaxed) || !orig || n == 0 || n > 64)
     return orig ? orig(self, root, w, n) : 0;
+  ResolveRawHandle(self);
+  const uint64_t hRaw = g_hRaw.load(std::memory_order_acquire);
+
+  // Diagnostics: the first few matrix writes, so a mismatch is visible.
+  for (uint32_t i = 0; i < n; ++i) {
+    if (w[i].unTag != kHmdMatrix34Tag || w[i].unBufferSize != 48) continue;
+    if (g_matrixWritesLogged.fetch_add(1, std::memory_order_relaxed) >= 8) break;
+    Log("matrix write: root 0x%llx path 0x%llx str %s%s", (unsigned long long)root,
+        (unsigned long long)w[i].ulPath, w[i].pszPath ? w[i].pszPath : "(null)",
+        hRaw && w[i].ulPath == hRaw ? " [rawFromMeshPose]" : "");
+  }
 
   Rigid R;
   if (!CurrentR(&R)) return orig(self, root, w, n);  // identity or no shm
@@ -190,9 +220,11 @@ uint32_t HookWritePathBatch(void* self, uint64_t root, PathWrite* w, uint32_t n)
   float mats[64][3][4];
   for (uint32_t i = 0; i < n; ++i) {
     copy[i] = w[i];
+    const bool pathMatch =
+        (hRaw && w[i].ulPath == hRaw) ||
+        (w[i].ulPath == 0 && w[i].pszPath && strcmp(w[i].pszPath, kRawFromMeshPose) == 0);
     const bool isRaw =
-        w[i].unTag == kHmdMatrix34Tag && w[i].unBufferSize == 48 && w[i].pvBuffer &&
-        (w[i].pszPath ? strcmp(w[i].pszPath, kRawFromMeshPose) == 0 : false);
+        pathMatch && w[i].unTag == kHmdMatrix34Tag && w[i].unBufferSize == 48 && w[i].pvBuffer;
     if (isRaw) {
       memcpy(mats[i], w[i].pvBuffer, 48);
       ApplyRToMatrix34(R, mats[i]);
@@ -236,6 +268,16 @@ void Install(void* obj) {
   }
   if (cur == reinterpret_cast<void*>(&HookWritePathBatch)) return;
 
+  // Slot 2 (StringToHandle) must also live in vrclient.so; take it before
+  // patching slot 1.
+  void** slot2;
+  void* stringToHandle;
+  if (!LocateVtableSlot(obj, 2, kVrclientModule, &slot2, &stringToHandle, &why, &info)) {
+    Log("not hooking: StringToHandle: %s (%s)", why.c_str(), info.c_str());
+    return;
+  }
+  g_stringToHandle.store(reinterpret_cast<StringToHandleFn>(stringToHandle),
+                         std::memory_order_release);
   g_origWrite.store(reinterpret_cast<WriteFn>(cur), std::memory_order_release);
   std::string err;
   if (!PatchSlot(slot, cur, reinterpret_cast<void*>(&HookWritePathBatch), &err)) {
