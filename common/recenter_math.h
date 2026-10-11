@@ -1,4 +1,5 @@
-// Recenter target math (SPEC §5.3), independent of the OpenVR client API so
+// Recenter target math (see docs/DESIGN.md, "Spaces and recenter math"),
+// independent of the OpenVR client API so
 // it can be unit-tested together with the driver-side pose math.
 #pragma once
 
@@ -18,7 +19,7 @@ struct RecenterOptions {
   double viewPitch = 0.0;
 };
 
-// Pure math part of §5.3, separated for unit tests.
+// Pure math of building the target, separated for unit tests.
 //   S_cur: HMD in TrackingUniverseStanding
 //   P_cur: HMD in TrackingUniverseRawAndUncalibrated
 // Returns Traw = Z ∘ S_tgt with Z = P_cur ∘ S_cur⁻¹ (raw-from-standing).

@@ -1,4 +1,4 @@
-// Host unit tests for the transform math and the §5.3 recenter pipeline,
+// Host unit tests for the transform math and the recenter pipeline,
 // including the driver-side half (R = Traw ∘ H⁻¹ applied to world-from-driver).
 #include <cstdio>
 #include <cstdlib>

@@ -1,5 +1,5 @@
 // Shared-memory protocol /recline_v1 between driver_recline and its clients
-// (recline_overlay, reclinectl). See SPEC.md §4.5.
+// (recline_overlay, reclinectl). See docs/DESIGN.md, "Shared-memory protocol".
 //
 // Every block is a seqlock. All accesses to the seq word *and* the payload go
 // through the __atomic builtins (payload: relaxed; ordering comes from the
@@ -115,7 +115,7 @@ inline void St(T& r, T v) {  // relaxed payload store
 }
 
 // ---------------------------------------------------------------------------
-// Seqlock protocol (SPEC §4.5.3 / §4.5.4)
+// Seqlock protocol
 
 // Reader. `copy` copies every payload field into locals with Ld(). Returns
 // false if no consistent snapshot was obtained within maxAttempts.
@@ -255,7 +255,8 @@ inline uint32_t SubmitCmd(CmdBlock& b, uint32_t cmd, const double q[4], const do
 }
 
 // ---------------------------------------------------------------------------
-// Open / create (SPEC §4.5.5)
+// Open / create: the creator publishes `magic` last with release ordering;
+// openers wait briefly for it and refuse a version mismatch.
 //
 // takeOverUninitialized: the driver passes true. If an existing segment never
 // gets its magic published (creator crashed between ftruncate and the magic

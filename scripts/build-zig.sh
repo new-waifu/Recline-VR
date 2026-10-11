@@ -1,6 +1,6 @@
 #!/bin/sh
 # Cross-builds everything for the Frame (aarch64, glibc 2.39) with Zig, as an
-# alternative to building on the device with CMake (SPEC §6). Produces the
+# alternative to building on the device with CMake. Produces the
 # same staged layout as the CMake build in $OUT (default: build-aarch64/stage).
 #
 #   ZIG=/path/to/zig OPENVR_LIB_DIR=../dev/opt/steamvr/bin/linuxarm64 scripts/build-zig.sh

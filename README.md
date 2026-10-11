@@ -1,111 +1,149 @@
 # Recline Recenter for SteamVR (Steam Frame)
 
-Implementation of `../SPEC.md`. Press one button while lying down and your
-current head orientation becomes level and forward (pitch/yaw/roll 0) at a
-chosen origin, for native Frame apps and PC streaming alike.
+Use VR lying down or reclined. Press one button and the direction you are looking
+becomes level and forward in VR, at a chosen eye height. It works for native apps on
+the Frame (OpenVR and OpenXR, standing and seated), and every tracked device moves
+together, so your hands stay attached. Reset puts everything back.
+
+SteamVR's own recenter can only turn you around (yaw), not tilt the world. Recline
+Recenter rotates the whole tracked world instead; [docs/DESIGN.md](docs/DESIGN.md)
+explains how and why.
 
 | Part | Path | What |
 |---|---|---|
-| `driver_recline.so` | `driver/` | Server driver, no devices. Hooks the shared `IVRServerDriverHost` vtable slot of `TrackedDevicePoseUpdated` and applies `pose' = R ∘ pose` to every device. |
-| `recline_overlay` | `overlay/` | Dashboard overlay (software-rendered), global input actions `recenter` / `reset`, haptics, `--register` / `--unregister`. |
-| `reclinectl` | `cli/` | `status`, `recenter`, `reset`, `set` over the same protocol. |
-| protocol / math | `common/` | `/recline_v1` seqlock shared memory, rigid-transform math, §5.3 recenter math. |
+| `driver_recline.so` | `driver/` | SteamVR driver (adds no devices) that applies the recline rotation to every tracked device's pose. |
+| `recline_overlay` | `overlay/` | Dashboard panel, controller actions and haptics; `--register` / `--unregister` for SteamVR. |
+| `reclinectl` | `cli/` | Command-line client: status, recenter, reset, diagnostics. |
+| shared code | `common/` | `/recline_v1` shared-memory protocol, transform and recenter math. |
+
+## Using it
+
+**Dashboard panel ("Recline"):**
+
+- **Recline recenter** makes your current view level and forward. **Reset to normal**
+  undoes it.
+- **Rotation:** *Full* also turns you to face the play area's forward direction;
+  *Level only* keeps the direction you're facing and just straightens the horizon
+  (on your back, you end up facing your feet).
+- **Position:** *Target height* puts your eyes at the chosen height above the floor
+  (presets *Sitting 1.20* and *Standing 1.50*, ±5 cm steps); *Keep position* leaves
+  your position alone.
+- **Also reset seated zero pose after recenter / reset** (on by default) keeps
+  seated-space games, sims and many OpenXR titles centred on you.
+- **Edit controller bindings** opens SteamVR's binding editor directly on this app.
+- The status area shows whether the driver is loaded, the current rotation, and
+  warnings (another tool hooking poses, boundary/passthrough limitations).
+
+"Level" means what you see straight through the lenses. On the Frame that is about
+14° below the headset's nominal forward axis; the offset is read from SteamVR, so
+other headsets work too.
+
+**Controller shortcuts** (default bindings, changeable via the button above):
+long-press right **Y** to recenter, right **X** to reset (Valve Index: right **B** /
+**A**). They work while a game is running, which means those long-presses are taken
+from the game.
+
+**Command line** (`~/.local/share/recline-vr/reclinectl`):
+
+    reclinectl status                      # driver loaded? hook? current rotation, conflicts
+    reclinectl recenter [--level-only] [--keep-position] [--height M] [--no-seated-reset]
+    reclinectl reset [--no-seated-reset]
+    reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   # explicit rotation (deg, m), testing
+    reclinectl poses                       # device poses per tracking space + display geometry
+    reclinectl bindings                    # open the binding editor in the headset
+    reclinectl setting get|set <section> <key> [value]  # SteamVR settings, for experiments
 
 ## Build
 
-On the Frame (preferred, SPEC §6), from a copy of this dir and `../openvr`:
+On the Frame, from a copy of this directory with the OpenVR headers in `../openvr`
+(or pass `-DOPENVR_INCLUDE_DIR=...`):
 
     cmake -S . -B build && cmake --build build -j && ctest --test-dir build
-    # staged, installable layout: build/stage/
+    # installable layout: build/stage/
 
-Cross-build from WSL with Zig (pins glibc 2.39 exactly; links libc++ statically):
+Cross-build from a PC with Zig (pins glibc 2.39, links libc++ statically):
 
     ZIG=/path/to/zig scripts/build-zig.sh        # -> build-aarch64/stage/
 
-Host (x86-64) CMake builds compile the drivers and run the unit tests; the
-overlay/CLI are skipped unless `OPENVR_LIB_DIR` has a matching `libopenvr_api.so`.
+x86-64 CMake builds compile the driver and run the unit tests; the overlay and CLI are
+skipped unless `OPENVR_LIB_DIR` has a matching `libopenvr_api.so`. The overlay uses
+Vulkan when its headers are available at build time and falls back to
+`SetOverlayRaw` otherwise.
 
-## Install / uninstall (SPEC §7)
+## Install / uninstall
 
-Copy the staged dir to the device, then with SteamVR running:
+Everything goes into your home directory; nothing in `/opt` is touched. With SteamVR
+running, from the staged directory:
 
-    ./install.sh        # copies to ~/.local/share/recline-vr, vrpathreg adddriver, --register
-    # restart SteamVR; check vrserver.txt for "recline"; then:
+    ./install.sh        # copies to ~/.local/share/recline-vr, registers driver and overlay
+    # restart SteamVR, then:
     ~/.local/share/recline-vr/reclinectl status
 
-    ~/.local/share/recline-vr/uninstall.sh   # --unregister, vrpathreg removedriver
+Uninstall (SteamVR running):
 
-## Smoke test without the overlay
+    ~/.local/share/recline-vr/uninstall.sh   # unregisters overlay and driver
+    # restart SteamVR, then delete ~/.local/share/recline-vr (optionally /dev/shm/recline_v1)
 
-Set `driver_recline.debugPitchDeg` to 90 (e.g. in `recline/resources/settings/default.vrsettings`)
-and restart SteamVR: the world is pitched 90° about the head once the first HMD pose arrives.
+## Settings
 
-## Driver log lines worth knowing (vrserver.txt, prefix `[recline]`)
+Driver (`recline/resources/settings/default.vrsettings`, section `driver_recline`):
 
-- `hook installed; chained to …` / `hook refused: …`
-- `GetRawTrackedDevicePoses returns post-world-from-driver poses …` or `… driver-space poses; downstream check disabled`
-  answers SPEC §10.5 automatically; the downstream-conflict check disables itself in the second case.
-- `conflict: …` when another hook wraps ours or modifies poses after us.
+- `loadPriority` (100): load before other drivers so their pose hooks wrap ours.
+- `debugPitchDeg` (0): apply a fixed pitch about the head at startup, for testing
+  without the overlay.
+- `downstreamCheck` (true): periodically check that nothing modifies poses after us.
 
-## Deviations from / decisions beyond the spec
+Overlay options are saved in `~/.config/recline-vr/overlay.conf`. The recline
+rotation itself is never saved: it is always reset when SteamVR restarts.
 
-- **Hot-path fallback without TLS.** §4.5.4 suggests a thread-local "last good R". A
-  `thread_local` in a dlopen'ed module can allocate on first touch per thread, so the
-  in-process R is instead kept in two seqlocked copies written one after the other;
-  a reader that fails 16 attempts on one copy reads the other. Same protocol, never
-  blocks, no allocation. If both fail (practically impossible) that one pose passes
-  through untransformed.
-- **Vtable index** of `TrackedDevicePoseUpdated` is derived at runtime from the header via
-  the Itanium pointer-to-member representation (ARM variant on aarch64), not hardcoded.
-- **Shm take-over:** if `/dev/shm/recline_v1` exists but never got its magic (creator
-  crashed mid-init), the driver initializes it after ~1 s; clients still refuse.
-- **Driver ignores stale commands** written before it started (records the current `cmd_id` at init).
-- **Eye height presets:** Sitting 1.20 m (default) and Standing 1.50 m, plus ±5 cm steps.
-- **Overlay options persist** in `~/.config/recline-vr/overlay.conf` (UI prefs only, never R).
-- **Mouse Y:** overlay assumes OpenVR's bottom-left mouse origin; set
-  `RECLINE_MOUSE_FLIP_Y=0` if clicks land mirrored (unverified on device).
-- **Default bindings:** long-press right `Y` = recenter, right `X` = reset (Frame
-  controller); Index: right `B` / `A`. Action set uses overlay-global priority so it
-  works in games, which means those long-presses are taken from the game.
-- `reclinectl recenter` and `reclinectl reset` also reset the seated zero pose (`--no-seated-reset` to skip), as the overlay does by default: recenter puts seated apps level in front of you, reset puts them back in front of your normal head pose.
-- Extra setting `driver_recline.downstreamCheck` (default true) disables the §4.6 raw-pose check.
+## Troubleshooting
 
-## Device results (2026-10-10)
+The driver logs to `~/.local/share/Steam/logs/vrserver.txt` with prefix `[recline]`:
 
-- §10.1 load: loads before `driver_cv` (loadPriority 100), hook installed on the
-  `r--p` vrserver vtable slot, HMD = device 0, ~1024 Hz HMD poses.
-- §10.3 recenter (numeric, via `reclinectl poses`): standing HMD becomes
-  0.00±0.01° at (0, 1.200, 0); seated becomes identity; reset restores. 63 ms round trip.
-- §10.5: `GetRawTrackedDevicePoses` returns post-world-from-driver poses (0.01 mm /
-  0.001° match), so the downstream check is active; with R = pitch 90° no conflict is
-  flagged, i.e. vrserver honors the full rotation.
-- §10.8 perf: `build/bench_hook` ≈ 92 ns per HMD call (budget 2 µs).
-- §10.2 visual (in headset while reclined, user's own apps; hellovr_sdl/helloxr not yet
-  run): controllers stay on the hands, no flicker or obvious swim.
-- Overlay (Vulkan texture), clicks, hover highlight, controller long-presses and haptics
-  work in headset.
-- Lens-centre recenter: the Frame's lens axis is ~14.4° below the head pose's forward
-  axis (asymmetric frustum); recenter always levels the lens axis (measured from SteamVR,
-  0 on headsets with a centred frustum). `reclinectl recenter --head-axis` (diagnostic,
-  undocumented in usage) levels the head axis instead.
-- Passthrough is broken while reclined (both 3D and 2D room view); under investigation separately.
-- §10.3 in headset: hellovr_vulkan (standing): Full / Level only / target height as
-  expected. helloxr --space Local (seated/OpenXR): with the seated option on, recenter
-  and reset both put the Local origin at the head; with it off the origin stays put.
-  (hellovr_sdl needs libGLEW.so.2.1, absent on the Frame; use
-  /opt/steamvr/tools/hellovr_vulkan_linux. helloxr exits on stdin EOF.)
-- §10.7 device reboot: driver registration in openvrpaths.vrpath survives, driver and
-  overlay load at startup, R starts as identity; shutdown log shows "hook removed" then
-  "[vrserver] Graceful exit".
-- §10.6 coexistence (a since-removed test driver with a second vtable hook applying a
-  10° yaw), both orders, each restart with a
-  recline left active in /recline_v1:
-  - test at loadPriority 200 (loads first): we chain to it; `conflict_downstream` raised
-    within ~7 s (err 9.99°), no `conflict_wrapped`.
-  - test at 50 (loads after us): it chains to us; `conflict_wrapped` raised within ~1 s,
-    downstream check matches (0.02 mm), no `conflict_downstream`.
-  - After every restart R was identity and the pre-restart command was not replayed.
-- Note: SteamVR's in-headset "Restart SteamVR" ends vrserver without driver Cleanup()
-  (driver_cv's is skipped too); only full shutdowns log "hook removed" + "Graceful exit".
-  The assert_*.dmp files written at restart come from vrdashboard and the Steam client.
-- Still open: streaming (§10.4), safe-mode message, uninstall.
+- `hook installed; chained to …`: working. `hook refused: …` explains why not.
+- `GetRawTrackedDevicePoses returns post-world-from-driver poses …`: the conflict
+  check is usable; with `… driver-space poses` it disables itself.
+- `conflict: another hook wrapped ours …` / `… modified after our hook …`: another
+  tool (e.g. a calibrator) also hooks poses; see docs/DESIGN.md.
+
+If the overlay says the driver isn't loaded, check that SteamVR's safe mode hasn't
+disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driver.
+
+## Known limitations
+
+- Passthrough is wrong while reclined (both 3D and 2D room view).
+- The boundary is drawn un-rotated and looks tilted while reclined.
+- A recenter invalidates PC-side tracker calibration (e.g. Space Calibrator) while
+  streaming.
+
+## Test log (Steam Frame, 2026-10-10)
+
+- **Load:** loads before `driver_cv`, hook installed on vrserver's read-only vtable
+  slot, HMD = device 0, ~1024 Hz HMD poses.
+- **Recenter (measured with `reclinectl poses`):** standing HMD becomes 0.00±0.01°
+  at (0, 1.200, 0); seated becomes identity; reset restores. 63 ms round trip.
+- **Full rotation honoured:** `GetRawTrackedDevicePoses` matches the hooked pose
+  (0.01 mm / 0.001°); with a 90° pitch, no downstream conflict is flagged.
+- **Performance:** `build/bench_hook` ≈ 92 ns per HMD pose.
+- **In headset:** world, controllers and overlay look right while reclined (no
+  flicker or swim). Overlay clicks, hover, controller long-presses and haptics work.
+  `hellovr_vulkan` (standing): Full, Level only and eye height as expected.
+  `helloxr --space Local` (seated, OpenXR): with the seated option on, recenter and
+  reset both centre the Local origin on the head; with it off the origin stays put.
+  (`hellovr_sdl` needs `libGLEW.so.2.1`, absent on the Frame; use
+  `/opt/steamvr/tools/hellovr_vulkan_linux`. `helloxr` exits when stdin closes.)
+- **Lens offset:** the Frame's lens axis is 14.37° below the head pose's forward axis.
+  `reclinectl recenter --head-axis` (diagnostic) levels the head axis instead.
+- **Reboot:** driver registration survives; driver and overlay start; rotation starts
+  as identity; shutdown logs `hook removed` then `[vrserver] Graceful exit`.
+- **Two pose hooks** (a temporary test driver applying a 10° yaw via the same slot),
+  with a recline left in shared memory before each restart:
+  - test driver loading first: we chain to it; `conflict_downstream` within ~7 s
+    (9.99° error), no `conflict_wrapped`.
+  - test driver loading after us: it chains to us; `conflict_wrapped` within ~1 s,
+    downstream check matches (0.02 mm).
+  - after every restart the rotation was identity and old commands weren't replayed.
+- **SteamVR restart from the headset** ends vrserver without driver cleanup (Valve's
+  own driver is skipped too); only full shutdowns log the cleanup. `assert_*.dmp`
+  files written at restart come from `vrdashboard` and the Steam client.
+- **Not yet tested:** streaming to a PC, the safe-mode message, uninstall.

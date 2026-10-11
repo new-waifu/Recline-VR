@@ -1,5 +1,6 @@
 // Client-side helpers shared by recline_overlay and reclinectl:
-// building the recenter target (SPEC §5.3) and the command handshake (§4.5.6).
+// building the recenter target and the command handshake (write a command,
+// then wait for the driver to acknowledge its id).
 #pragma once
 
 #include <openvr.h>
@@ -97,7 +98,7 @@ inline const char* SendResultText(SendResult r) {
   }
 }
 
-// Write a command and wait for the driver's ack (SPEC §4.5.6).
+// Write a command and wait for the driver's ack.
 inline SendResult SendCommand(ReclineShm* shm, uint32_t cmd, const Rigid* payload,
                               StateSnapshot* stateOut = nullptr, double timeoutSec = 0.5) {
   double q[4] = {1, 0, 0, 0}, t[3] = {0, 0, 0};

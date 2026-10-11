@@ -1,4 +1,4 @@
-// Microbenchmark of the per-call work driver_recline's hook adds (SPEC §10.8):
+// Microbenchmark of the per-call work driver_recline's hook adds:
 // bounded seqlock read of R, world transform of the pose, HMD try-lock publish.
 #include <cstdio>
 #include <ctime>

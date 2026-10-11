@@ -1,4 +1,4 @@
-// DriverPose_t helpers shared by the drivers and the unit tests (SPEC §4.3/§4.4).
+// DriverPose_t helpers shared by the driver and the unit tests.
 #pragma once
 
 #include <openvr_driver.h>
@@ -25,8 +25,8 @@ inline Rigid HeadFromDriverPose(const vr::DriverPose_t& d) {
   return h;
 }
 
-// Same, without world-from-driver (used to classify GetRawTrackedDevicePoses
-// semantics, SPEC §10.5).
+// Same, without world-from-driver (used to tell whether GetRawTrackedDevicePoses
+// returns poses before or after world-from-driver).
 inline Rigid HeadInDriverSpace(const vr::DriverPose_t& d) {
   vr::DriverPose_t c = d;
   c.qWorldFromDriverRotation = {1, 0, 0, 0};

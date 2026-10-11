@@ -1,5 +1,5 @@
 // recline_overlay: SteamVR dashboard overlay + global input actions that
-// drive driver_recline over /recline_v1. See SPEC.md §5.
+// drive driver_recline over /recline_v1.
 //
 //   recline_overlay               run as overlay (VRApplication_Overlay)
 //   recline_overlay --register    add manifest + enable auto-launch, then exit

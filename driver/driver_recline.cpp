@@ -3,7 +3,8 @@
 // vtable and left-multiplies every device's world-from-driver transform by a
 // rigid transform R, so the whole tracked world can be pitched/rolled, not just
 // yawed. R is controlled over the /recline_v1 shared-memory protocol.
-// See SPEC.md §4.
+// docs/DESIGN.md explains why this approach (the official chaperone API can
+// only yaw) and the safety rules the hook follows.
 
 #include <openvr_driver.h>
 
@@ -62,15 +63,16 @@ std::atomic<bool> g_downstreamCheckEnabled{true};
 void** g_slot = nullptr;  // &vtbl[index of TrackedDevicePoseUpdated]
 
 // ---------------------------------------------------------------------------
-// In-process R (SPEC §4.5.1): seqlocked, single writer (command thread),
-// readers are hook threads.
+// In-process R: seqlocked, single writer (command thread), readers are hook
+// threads. The hook never reads R from shared memory.
 //
-// SPEC §4.5.4 asks the bounded hot-path reader to fall back to a thread-local
-// "last good R". A thread_local in a dlopen'ed module may allocate on first
-// access per thread (dynamic TLS), which the hot path must not do. Instead R
-// is kept in two seqlocked copies that the writer updates one after the
-// other, so at any instant at least one copy is stable; a reader that fails
-// on one copy reads the other. Same protocol, no TLS, never blocks.
+// The hot-path reader is bounded and must never block. The textbook fallback
+// for a reader that keeps losing races would be a thread_local "last good R",
+// but a thread_local in a dlopen'ed module may allocate on first access per
+// thread (dynamic TLS), which the hot path must not do. Instead R is kept in
+// two seqlocked copies that the writer updates one after the other, so at any
+// instant at least one copy is stable; a reader that fails on one copy reads
+// the other. Same protocol, no TLS, never blocks.
 struct alignas(64) LocalR {
   uint32_t seq;
   uint32_t identity;  // payload: 1 if R is identity (fast path)
@@ -135,7 +137,9 @@ void PublishHmd(const vr::DriverPose_t& in) {
 }
 
 // ---------------------------------------------------------------------------
-// Downstream-conflict self-check (SPEC §4.6), sampled ~1 Hz from the hook.
+// Downstream-conflict self-check, sampled ~1 Hz from the hook: compare what
+// vrserver reports for the HMD with R ∘ H. A persistent mismatch means another
+// hook modifies poses after ours.
 
 constexpr double kCheckPosTolM = 0.002;
 constexpr double kCheckRotTolRad = 0.25 * kPi / 180.0;
@@ -180,7 +184,8 @@ void MaybeCheckDownstream(vr::IVRServerDriverHost* self, uint32_t id,
     return;
   }
   // Does the API return poses before world-from-driver? Then this check can't
-  // see downstream modifications at all: drop it (SPEC §10.5).
+  // see downstream modifications at all: drop it rather than report false
+  // conflicts.
   const Rigid driverSpace = HeadInDriverSpace(in);
   const bool wfdIsIdentity = IsIdentity(Compose(H, Inverse(driverSpace)), 1e-6);
   if (!wfdIsIdentity && Length(got.t - driverSpace.t) <= kCheckPosTolM &&
@@ -219,7 +224,7 @@ void PoseHook(vr::IVRServerDriverHost* self, uint32_t id, const vr::DriverPose_t
 }
 
 // ---------------------------------------------------------------------------
-// Hook installation (SPEC §4.2)
+// Hook installation
 
 bool InstallHook(vr::IVRServerDriverHost* host, std::string* why) {
   void** slot;
@@ -247,8 +252,8 @@ bool InstallHook(vr::IVRServerDriverHost* host, std::string* why) {
 }
 
 // ---------------------------------------------------------------------------
-// Pin this .so (SPEC §4.7): a later dlclose must never unmap code that may
-// still be in someone's call chain.
+// Pin this .so: a later dlclose must never unmap code that may still be in
+// someone's call chain (e.g. a hook installed after ours that calls into us).
 
 void PinSelf() {
   Dl_info info{};
@@ -285,7 +290,7 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     if (!shm) Log("error: shared memory unavailable (%s); commands disabled", err.c_str());
     if (shm) {
       // Ignore commands written before this driver instance started: no
-      // transform survives a restart (SPEC §4.7).
+      // transform survives a restart, and the segment outlives vrserver.
       CmdSnapshot c;
       if (ReadCmd(shm->cmd, &c)) lastCmdId_ = c.cmd_id;
       StateSnapshot ss;
@@ -403,8 +408,7 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       bool stateDirty = false;
 
       if (shm_) {
-        // Crashed CmdBlock writer recovery (SPEC §4.5.3): the only cross-writer
-        // recovery. A seq that stays at the same odd value for > 1 s belongs to
+        // Crashed CmdBlock writer recovery: the only cross-writer recovery. A seq that stays at the same odd value for > 1 s belongs to
         // a writer that died mid-write; force it to the next even value. The
         // (possibly torn) payload is then read as a normal command and
         // validated like any other.
@@ -437,7 +441,8 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       if (now >= nextSlow) {
         nextSlow = now + 1.0;
         uint32_t flags = state_.flags;
-        // conflict_wrapped: someone replaced our slot entry (SPEC §4.6).
+        // conflict_wrapped: someone replaced our slot entry, so their transform
+        // is applied before ours. Harmless, but reported.
         if (g_hookInstalled.load() && g_slot) {
           void* cur = __atomic_load_n(g_slot, __ATOMIC_RELAXED);
           if (cur != reinterpret_cast<void*>(&PoseHook)) flags |= FLAG_CONFLICT_WRAPPED;
@@ -558,7 +563,7 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
   }
 
   // debugPitchDeg: fixed pitch about the head position, applied once the first
-  // HMD pose arrives (smoke test before the overlay exists, SPEC §4.7).
+  // HMD pose arrives (for testing without any client).
   bool TryApplyDebugPitch(bool* dirty) {
     Rigid H;
     if (!LatestHead(&H)) {

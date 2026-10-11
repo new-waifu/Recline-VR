@@ -1,4 +1,4 @@
-// reclinectl: command-line client for driver_recline (SPEC §5.4).
+// reclinectl: command-line client for driver_recline.
 //
 //   reclinectl status
 //   reclinectl recenter [--keep-position] [--level-only] [--height M] [--no-seated-reset]

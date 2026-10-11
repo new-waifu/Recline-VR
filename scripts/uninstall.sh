@@ -1,5 +1,5 @@
 #!/bin/sh
-# Uninstalls Recline Recenter (SPEC §7). SteamVR must be running for the
+# Uninstalls Recline Recenter. SteamVR must be running for the
 # overlay unregistration step.
 set -eu
 DEST=${DEST:-$HOME/.local/share/recline-vr}

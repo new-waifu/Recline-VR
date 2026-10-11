@@ -1,4 +1,4 @@
-// Host stress tests for the /recline_v1 seqlock protocol (SPEC §4.5): readers
+// Host stress tests for the /recline_v1 seqlock protocol: readers
 // must never observe a torn payload, multi-writer CmdBlock ids must be unique,
 // the HMD try-lock must never block, and the open/version handshake must work.
 #include <atomic>
