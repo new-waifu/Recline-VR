@@ -4,7 +4,7 @@
 		{
 			"app_key" : "user.recline.overlay",
 			"launch_type" : "binary",
-			"@VR_BINARY_PATH_KEY@" : "recline_overlay",
+			"@VR_BINARY_PATH_KEY@" : "recline_overlay@CMAKE_EXECUTABLE_SUFFIX@",
 			"is_dashboard_overlay" : true,
 			"image_path" : "icon.png",
 			"action_manifest_path" : "actions.json",

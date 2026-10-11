@@ -2,17 +2,9 @@
 // command submit, segment open/create). See recline_shm.h.
 #include "recline_shm.h"
 
-#include <cerrno>
 #include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <thread>
-
-#include <fcntl.h>
-#include <sched.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 namespace recline {
 
@@ -63,7 +55,7 @@ uint32_t SubmitCmd(CmdBlock& b, uint32_t cmd, const double q[4], const double t[
     if (++spins < 64) {
       CpuRelax();
     } else {
-      sched_yield();
+      std::this_thread::yield();
       if (MonotonicSeconds() > deadline) return 0;
     }
   }
@@ -79,46 +71,15 @@ uint32_t SubmitCmd(CmdBlock& b, uint32_t cmd, const double q[4], const double t[
 
 ReclineShm* OpenShm(bool takeOverUninitialized, std::string* err, const char* name) {
   bool created = false;
-  int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
-  if (fd >= 0) {
-    created = true;
-    if (ftruncate(fd, kShmSize) != 0) {
-      if (err) *err = std::string("ftruncate: ") + strerror(errno);
-      close(fd);
-      shm_unlink(name);
-      return nullptr;
-    }
-  } else if (errno == EEXIST) {
-    fd = shm_open(name, O_RDWR, 0600);
-    if (fd < 0) {
-      if (err) *err = std::string("shm_open existing: ") + strerror(errno);
-      return nullptr;
-    }
-    struct stat st {};
-    // A concurrent creator may not have run ftruncate yet: wait briefly.
-    for (int i = 0; i < 100; ++i) {
-      if (fstat(fd, &st) == 0 && size_t(st.st_size) >= kShmSize) break;
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    if (size_t(st.st_size) < kShmSize) {
-      if (err) *err = "existing /dev/shm/recline_v1 has the wrong size";
-      close(fd);
-      return nullptr;
-    }
-  } else {
-    if (err) *err = std::string("shm_open: ") + strerror(errno);
-    return nullptr;
-  }
-
-  void* p = mmap(nullptr, kShmSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  close(fd);
-  if (p == MAP_FAILED) {
-    if (err) *err = std::string("mmap: ") + strerror(errno);
+  std::string e;
+  void* p = MapSharedMemory(name, kShmSize, &created, &e);
+  if (!p) {
+    if (err) *err = e;
     return nullptr;
   }
   auto* shm = static_cast<ReclineShm*>(p);
 
-  if (created) {  // zero-filled by ftruncate
+  if (created) {  // zero-filled
     St(shm->version, kVersion);
     St(shm->magic, kMagic, std::memory_order_release);
     return shm;
@@ -137,7 +98,7 @@ ReclineShm* OpenShm(bool takeOverUninitialized, std::string* err, const char* na
       return shm;
     }
     if (err) *err = "shared memory /recline_v1 was never initialized (bad magic)";
-    munmap(p, kShmSize);
+    UnmapSharedMemory(p, kShmSize);
     return nullptr;
   }
   const uint32_t ver = Ld(shm->version);
@@ -147,7 +108,7 @@ ReclineShm* OpenShm(bool takeOverUninitialized, std::string* err, const char* na
       snprintf(buf, sizeof buf, "shared memory version %u, expected %u", ver, kVersion);
       *err = buf;
     }
-    munmap(p, kShmSize);
+    UnmapSharedMemory(p, kShmSize);
     return nullptr;
   }
   return shm;

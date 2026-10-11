@@ -9,7 +9,7 @@
 #include <sstream>
 #include <vector>
 
-#include <dlfcn.h>
+#include "platform.h"
 #endif
 
 namespace recline {
@@ -18,8 +18,10 @@ namespace recline {
 
 
 // `VkFooInfo x{sType}` value-initializes the remaining fields, as intended.
+#ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
 
 struct VkOverlayTexture::Impl {
   ~Impl() { Destroy(); }
@@ -113,12 +115,13 @@ struct VkOverlayTexture::Impl {
   if (!name) { *err = "missing Vulkan entry point " #name; return false; }
 
   bool InitInstance(std::string* err) {
-    lib_ = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+    lib_ = OpenLibrary(kVulkanLoaderName);
     if (!lib_) {
-      *err = "libvulkan.so.1 not available";
+      *err = std::string(kVulkanLoaderName) + " not available";
       return false;
     }
-    vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(lib_, "vkGetInstanceProcAddr"));
+    vkGetInstanceProcAddr =
+        reinterpret_cast<PFN_vkGetInstanceProcAddr>(LibrarySymbol(lib_, "vkGetInstanceProcAddr"));
     if (!vkGetInstanceProcAddr) {
       *err = "vkGetInstanceProcAddr not found";
       return false;
@@ -392,7 +395,9 @@ struct VkOverlayTexture::Impl {
   PFN_vkQueueWaitIdle vkQueueWaitIdle = nullptr;
 };
 
+#ifdef __GNUC__
 #pragma GCC diagnostic pop
+#endif
 
 #else  // !RECLINE_HAVE_VULKAN
 

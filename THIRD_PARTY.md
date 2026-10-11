@@ -17,3 +17,8 @@ licenses:
   these headers and the runtime keeps serving old versions, so they must not be
   newer than the SteamVR on the device. Update them only when a newer API is
   needed.
+- `third_party/minhook/` is a subset of MinHook tag `v1.3.4`
+  (https://github.com/TsudaKageyu/minhook), copied unmodified: `CMakeLists.txt`,
+  `LICENSE.txt`, `AUTHORS.txt`, `cmake/`, `dll_resources/`, `include/` and `src/`;
+  BSD-2-Clause, Tsuda Kageyu (Hacker Disassembler Engine: BSD-2-Clause, Vyacheslav
+  Patkov). Windows builds only.

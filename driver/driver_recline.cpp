@@ -21,32 +21,34 @@
 #include <string>
 #include <thread>
 
-#include <dlfcn.h>
-#include <sys/mman.h>
-#include <unistd.h>
-
-#include "recline_math.h"
+#include "platform.h"
+#include "pose_hook.h"
 #include "pose_math.h"
+#include "recline_math.h"
 #include "recline_shm.h"
-#include "slot_patch.h"
 #ifdef RECLINE_FRAME
+#include "slot_patch.h"
 #include "spawn_inject.h"
 #endif
 
+#ifdef _WIN32
+#define RECLINE_EXPORT extern "C" __declspec(dllexport)
+#define RECLINE_PRINTF(f, a)
+#else
 #define RECLINE_EXPORT extern "C" __attribute__((visibility("default")))
+#define RECLINE_PRINTF(f, a) __attribute__((format(printf, f, a)))
+#endif
 
 namespace {
 
 using namespace recline;
-
-using PoseFn = void (*)(vr::IVRServerDriverHost*, uint32_t, const vr::DriverPose_t&, uint32_t);
 
 constexpr const char* kSection = "driver_recline";
 
 // ---------------------------------------------------------------------------
 // Logging (never from the hot path)
 
-void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+void Log(const char* fmt, ...) RECLINE_PRINTF(1, 2);
 void Log(const char* fmt, ...) {
   char buf[1024];
   int n = snprintf(buf, sizeof buf, "[recline] ");
@@ -67,7 +69,6 @@ std::atomic<uint32_t> g_hmdIndex{vr::k_unTrackedDeviceIndex_Hmd};
 std::atomic<ReclineShm*> g_shm{nullptr};
 std::atomic<uint64_t> g_hmdPoseCount{0};
 std::atomic<bool> g_downstreamCheckEnabled{true};
-void** g_slot = nullptr;  // &vtbl[index of TrackedDevicePoseUpdated]
 
 // ---------------------------------------------------------------------------
 // In-process R: two seqlocked copies, written one after the other by the
@@ -227,54 +228,30 @@ void PoseHook(vr::IVRServerDriverHost* self, uint32_t id, const vr::DriverPose_t
 // Hook installation
 
 bool InstallHook(vr::IVRServerDriverHost* host, std::string* why) {
-  void** slot;
-  void* cur;
   std::string info;
-  const size_t idx = VirtualSlotIndex(&vr::IVRServerDriverHost::TrackedDevicePoseUpdated);
-  const bool located = LocateVtableSlot(host, idx, nullptr, &slot, &cur, why, &info);
+  const bool ok = InstallPoseHook(host, &PoseHook, &g_prev, why, &info);
   if (!info.empty()) Log("%s", info.c_str());
-  if (!located) return false;
-  if (cur == reinterpret_cast<void*>(&PoseHook)) {
-    *why = "hook already installed (re-init)";
-    return false;
-  }
-  // Store prev before the hook can run; chain to whatever was there (another
-  // vtable hook or the original thunk).
-  g_prev.store(reinterpret_cast<PoseFn>(cur), std::memory_order_release);
-  std::string err;
-  const bool ok = PatchSlot(slot, cur, reinterpret_cast<void*>(&PoseHook), &err);
-  if (!err.empty() && ok) Log("%s", err.c_str());
-  if (!ok) {
-    *why = "patching vtable slot failed: " + err;
-    return false;
-  }
-  g_slot = slot;
-  return true;
+  return ok;
 }
 
 // ---------------------------------------------------------------------------
-// Pin this .so: a later dlclose must never unmap code that may still be in
+// Pin this module: unloading it must never unmap code that may still be in
 // someone's call chain (e.g. a hook installed after ours that calls into us).
 
 void PinSelf() {
-  Dl_info info{};
-  if (!dladdr(reinterpret_cast<void*>(&PoseHook), &info) || !info.dli_fname) {
-    Log("warning: dladdr failed, cannot pin module");
-    return;
-  }
-  if (!dlopen(info.dli_fname, RTLD_NOW | RTLD_NODELETE))
-    Log("warning: RTLD_NODELETE pin of %s failed: %s", info.dli_fname, dlerror());
+  const void* self = reinterpret_cast<const void*>(&PoseHook);
+  std::string err;
+  if (!PinModuleOf(self, &err))
+    Log("warning: could not pin module: %s", err.c_str());
   else
-    Log("pinned %s", info.dli_fname);
+    Log("pinned %s", ModulePathOf(self).c_str());
 }
 
 #ifdef RECLINE_FRAME
 // Absolute path to the XRService shim, which ships next to this driver .so
 // (.../recline/bin/linuxarm64/librecline_xrshim.so). Empty if undeterminable.
 std::string ShimPath() {
-  Dl_info info{};
-  if (!dladdr(reinterpret_cast<void*>(&PoseHook), &info) || !info.dli_fname) return {};
-  std::string p = info.dli_fname;
+  std::string p = ModulePathOf(reinterpret_cast<const void*>(&PoseHook));
   const size_t slash = p.rfind('/');
   if (slash == std::string::npos) return {};
   return p.substr(0, slash + 1) + "librecline_xrshim.so";
@@ -351,17 +328,10 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     // Pure pass-through from now on, whether or not we can unhook: wrappers
     // installed after us may still call into PoseHook.
     g_disabled.store(true, std::memory_order_release);
-    if (g_hookInstalled.load() && g_slot) {
-      void* cur = std::atomic_ref<void*>(*g_slot).load(std::memory_order_acquire);
-      if (cur == reinterpret_cast<void*>(&PoseHook)) {
-        std::string err;
-        if (PatchSlot(g_slot, cur, reinterpret_cast<void*>(g_prev.load()), &err))
-          Log("hook removed%s%s", err.empty() ? "" : "; ", err.c_str());
-        else
-          Log("warning: could not remove hook (%s); staying as pass-through", err.c_str());
-      } else {
-        Log("hook was wrapped by %p; staying installed as pass-through", cur);
-      }
+    if (g_hookInstalled.load()) {
+      std::string msg;
+      RemovePoseHook(&msg);
+      Log("%s", msg.c_str());
     }
     if (shm_) {
       state_.flags &= ~(FLAG_TRANSFORM_ACTIVE | FLAG_HOOK_INSTALLED);
@@ -475,9 +445,8 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
         uint32_t flags = state_.flags;
         // wrapped: someone replaced our slot entry, so their transform is applied
         // before R. Expected (e.g. a calibrator), but reported.
-        if (g_hookInstalled.load() && g_slot) {
-          void* cur = std::atomic_ref<void*>(*g_slot).load(std::memory_order_relaxed);
-          if (cur != reinterpret_cast<void*>(&PoseHook)) flags |= FLAG_WRAPPED;
+        if (g_hookInstalled.load()) {
+          if (PoseHookWrapped()) flags |= FLAG_WRAPPED;
           else flags &= ~FLAG_WRAPPED;
         }
         if (g_conflictDownstream.load(std::memory_order_relaxed)) flags |= FLAG_CONFLICT_DOWNSTREAM;

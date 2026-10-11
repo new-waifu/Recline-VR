@@ -1,8 +1,8 @@
-// Helpers for patching code pointers in place: vtable slots (the driver's
-// IVRServerDriverHost hook, the XRService shim's vrclient hooks) and GOT
-// entries (the driver's spawn injection). Nothing here is build-specific: vtable indices are derived from the
-// headers, and every address is validated against /proc/self/maps before
-// writing.
+// Helpers for patching code pointers in place, Linux only: vtable slots (the
+// driver's IVRServerDriverHost hook, the XRService shim's vrclient hooks) and GOT
+// entries (the driver's spawn injection). Nothing here is build-specific: vtable
+// indices are derived from the headers, and every address is validated against
+// /proc/self/maps before writing.
 #pragma once
 
 #include <cstddef>

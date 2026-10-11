@@ -232,8 +232,8 @@ int Poses() {
     }
   }
   // Display geometry: what the HMD pose means for the rendered views.
-  for (int e = 0; e < 2; ++e) {
-    const vr::EVREye eye = e ? vr::Eye_Right : vr::Eye_Left;
+  for (int i = 0; i < 2; ++i) {
+    const vr::EVREye eye = i ? vr::Eye_Right : vr::Eye_Left;
     const Rigid eh = FromMatrix34(vr::VRSystem()->GetEyeToHeadTransform(eye));
     double y, p, ro;
     ToYawPitchRoll(eh.q, &y, &p, &ro);
@@ -261,8 +261,8 @@ int Poses() {
     if (pe == vr::TrackedProp_Success) printf("%s = %.4f\n", pr.name, v);
     else printf("%s: %s\n", pr.name, vr::VRSystem()->GetPropErrorNameFromEnum(pe));
   }
-  for (int e = 0; e < 2; ++e) {
-    const vr::EVREye eye = e ? vr::Eye_Right : vr::Eye_Left;
+  for (int i = 0; i < 2; ++i) {
+    const vr::EVREye eye = i ? vr::Eye_Right : vr::Eye_Left;
     const vr::HmdMatrix44_t P = vr::VRSystem()->GetProjectionMatrix(eye, 0.1f, 100.0f);
     // Forward axis (0,0,-1) in NDC: x = -m[0][2], y = -m[1][2] (w = 1).
     printf("view pitch (lens centre vs head axis, both eyes): %.2f deg\n",

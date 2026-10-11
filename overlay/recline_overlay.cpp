@@ -12,16 +12,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include <limits.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
 #include "canvas.h"
+#include "platform.h"
 #include "recline_client.h"
 #include "vk_texture.h"
 
@@ -45,14 +43,9 @@ const Color kGood{90, 200, 120, 255};
 const Color kWarn{255, 190, 70, 255};
 const Color kBad{255, 95, 95, 255};
 
-std::string ExeDir() {
-  char buf[PATH_MAX];
-  const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
-  if (n <= 0) return ".";
-  buf[n] = 0;
-  std::string s(buf);
-  const size_t slash = s.rfind('/');
-  return slash == std::string::npos ? "." : s.substr(0, slash);
+// std::filesystem path from a UTF-8 string (the platform layer's encoding).
+std::filesystem::path Utf8Path(const std::string& s) {
+  return std::filesystem::path(std::u8string(s.begin(), s.end()));
 }
 
 const char* AppErr(vr::EVRApplicationError e) {
@@ -71,7 +64,8 @@ bool InitVR(vr::EVRApplicationType type) {
 }
 
 int Register(const std::string& manifest) {
-  if (access(manifest.c_str(), R_OK) != 0) {
+  std::error_code ec;
+  if (!std::filesystem::exists(Utf8Path(manifest), ec)) {
     fprintf(stderr, "manifest not found: %s\n", manifest.c_str());
     return 1;
   }
@@ -127,46 +121,43 @@ struct Options {
   bool seatedReset = true;
 };
 
-std::string ConfigPath() {
-  const char* xdg = getenv("XDG_CONFIG_HOME");
-  const char* home = getenv("HOME");
-  std::string base = xdg && *xdg ? xdg : std::string(home ? home : ".") + "/.config";
-  return base + "/recline-vr/overlay.conf";
-}
+namespace fs = std::filesystem;
+
+fs::path ConfigPath() { return Utf8Path(UserConfigDir()) / "recline-vr" / "overlay.conf"; }
 
 void LoadOptions(Options* o) {
-  FILE* f = fopen(ConfigPath().c_str(), "r");
-  if (!f) return;
-  char key[64];
-  double v;
-  while (fscanf(f, " %63[^=]=%lf", key, &v) == 2) {
-    const std::string k(key);
+  std::ifstream f(ConfigPath());
+  std::string line;
+  while (std::getline(f, line)) {
+    const size_t eq = line.find('=');
+    if (eq == std::string::npos) continue;
+    const std::string k = line.substr(0, eq);
+    char* end;
+    const double v = strtod(line.c_str() + eq + 1, &end);
+    if (end == line.c_str() + eq + 1) continue;
     if (k == "levelOnly") o->rc.levelOnly = v != 0;
     else if (k == "keepPosition") o->rc.keepPosition = v != 0;
     else if (k == "eyeHeight" && v >= 0.2 && v <= 2.5) o->rc.eyeHeight = v;
     else if (k == "seatedReset") o->seatedReset = v != 0;
   }
-  fclose(f);
 }
 
 void SaveOptions(const Options& o) {
-  const std::string path = ConfigPath();
-  const std::string dir = path.substr(0, path.rfind('/'));
-  mkdir(dir.substr(0, dir.rfind('/')).c_str(), 0700);
-  mkdir(dir.c_str(), 0700);
+  const fs::path path = ConfigPath();
+  std::error_code ec;
+  fs::create_directories(path.parent_path(), ec);
+  {
+    std::ofstream f(path, std::ios::trunc);
+    if (!f) return;
+    char buf[128];
+    snprintf(buf, sizeof buf, "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\n",
+             o.rc.levelOnly, o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset);
+    f << buf;
+  }
   // Explicit mode (and repair of an older file): SteamVR may launch us with
   // umask 0, which would leave the file world-writable.
-  const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-  if (fd < 0) return;
-  fchmod(fd, 0644);
-  FILE* f = fdopen(fd, "w");
-  if (!f) {
-    close(fd);
-    return;
-  }
-  fprintf(f, "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\n", o.rc.levelOnly,
-          o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset);
-  fclose(f);
+  fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read |
+                            fs::perms::others_read, ec);
 }
 
 // ---------------------------------------------------------------------------
@@ -593,7 +584,7 @@ void Usage() {
 }  // namespace
 
 int main(int argc, char** argv) {
-  const std::string dir = ExeDir();
+  const std::string dir = ExecutableDir();
   const std::string manifest = dir + "/recline_overlay.vrmanifest";
   if (argc > 1) {
     const std::string a = argv[1];

@@ -8,9 +8,13 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <ctime>
 #include <string>
 
+#ifdef _MSC_VER
+#include <intrin.h>  // _mm_pause / __yield
+#endif
+
+#include "platform.h"
 
 namespace recline {
 
@@ -86,7 +90,11 @@ static_assert(std::atomic_ref<double>::is_always_lock_free, "double atomics must
 // Atomic field access
 
 inline void CpuRelax() {
-#if defined(__aarch64__)
+#if defined(_M_X64) || defined(_M_IX86)
+  _mm_pause();
+#elif defined(_M_ARM64)
+  __yield();
+#elif defined(__aarch64__)
   asm volatile("yield" ::: "memory");
 #elif defined(__x86_64__) || defined(__i386__)
   __builtin_ia32_pause();
@@ -162,14 +170,6 @@ inline void SeqWriteEnd(uint32_t& seq, uint32_t s) {
 
 // ---------------------------------------------------------------------------
 // Helpers
-
-// The protocol's clock (HmdBlock::time is compared across processes), named
-// explicitly rather than relying on which clock std::chrono::steady_clock uses.
-inline double MonotonicSeconds() {
-  timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
-}
 
 struct CmdSnapshot {
   uint32_t cmd_id = 0, cmd = 0;

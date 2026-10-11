@@ -7,9 +7,6 @@
 #include <thread>
 #include <vector>
 
-#include <sys/mman.h>
-#include <unistd.h>
-
 #include "recline_shm.h"
 
 using namespace recline;
@@ -153,8 +150,8 @@ static void TestBoundedReadOnStuckWriter() {
 
 static void TestOpen() {
   char name[64];
-  snprintf(name, sizeof name, "/recline_test_%d", int(getpid()));
-  shm_unlink(name);
+  snprintf(name, sizeof name, "/recline_test_%d", ProcessId());
+  RemoveSharedMemory(name);
   std::string err;
   ReclineShm* a = OpenShm(false, &err, name);
   CHECK(a != nullptr, "create: %s", err.c_str());
@@ -175,7 +172,7 @@ static void TestOpen() {
     ReclineShm* d = OpenShm(true, &err, name);
     CHECK(d && d->magic == kMagic && d->version == kVersion, "driver takeover: %s", err.c_str());
   }
-  shm_unlink(name);
+  RemoveSharedMemory(name);
 }
 
 int main() {

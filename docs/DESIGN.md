@@ -62,6 +62,20 @@ that adds no devices and exists only to install that hook.
   pass-through rather than break their chain.
 - The hot path (about 1 kHz per device) takes no locks, does no allocation and
   doesn't log. Measured cost on the Frame is about 92 ns per HMD pose.
+- On Windows (`pose_hook_win.cpp`) the hook is a MinHook detour of the function
+  the slot points to rather than a slot patch, because Space Calibrator detours
+  that function there: a slot patch would run before any detour whatever the
+  install order. MSVC encodes a virtual member pointer as a vcall thunk, so the
+  index comes from calling it on a fake object whose vtable entries record their
+  position. `VirtualQuery` takes the place of `/proc/self/maps` (image mapping,
+  read-only slot, executable target), `GetModuleHandleEx(…PIN)` that of
+  `RTLD_NODELETE`. `wrapped` also covers a later detour (our jump at the function
+  entry was overwritten), and on `Cleanup` the detour is only disabled if nothing
+  wrapped it.
+- `tests/test_pose_hook.cpp` checks install, chaining, removal and the ordering
+  against a Space Calibrator-style hook installed after ours, with a fake
+  `IVRServerDriverHost`: a slot patch on Linux, and on Windows a detour from a
+  separate DLL with its own MinHook copy.
 
 ## Spaces and recenter math
 
@@ -280,7 +294,12 @@ On the Frame, the PC-streaming client is an ordinary OpenVR app that reads poses
 from the compositor and sends them to the PC, so the Frame-side transform reaches
 streamed games with nothing installed on the PC. Verified in use.
 
-## Frame-specific parts
+## Platforms
+
+OS-specific code sits behind two interfaces with one implementation file per
+platform: `common/platform.h` (clock, shared memory, module and executable paths,
+dynamic loading, config directory) and `driver/pose_hook.h` (install, remove,
+`wrapped`). The CMake platform block picks the files and the toolchain flags.
 
 Everything Frame-specific sits behind the CMake option `RECLINE_FRAME` (compile
 definition of the same name), which defaults to on for `linuxarm64` and off
@@ -289,13 +308,17 @@ elsewhere:
 - the XRService passthrough shim and the driver's spawn injection that loads it;
 - the overlay's hint about PC-side calibration while streaming.
 
-The pose hook, shared memory, recenter math, overlay and CLI are generic Linux
-code. A Linux x86-64 build compiles and links, but hasn't been tested with a PC
-headset. The overlay manifest's `binary_path` key is generated per platform
-(`binary_path_linux_arm` or `binary_path_linux`), and the install scripts find
-`vrpathreg` in `/opt/steamvr` or a Steam install (or take `$VRPATHREG`).
-Windows would be a port: the vtable-index derivation assumes the Itanium C++
-ABI, and the safety checks read `/proc/self/maps`.
+The rest is generic. A Linux x86-64 build compiles and links, but hasn't been
+tested with a PC headset. The overlay manifest's `binary_path` key is generated
+per platform (`binary_path_linux_arm`, `binary_path_linux` or
+`binary_path_windows`), and the install scripts find `vrpathreg` in
+`/opt/steamvr` or a Steam install (or take `$VRPATHREG`).
+
+A Windows build (MSVC, static CRT) compiles, links and passes the unit tests,
+but hasn't been run in SteamVR, and has no install script: the driver would be
+registered with `vrpathreg.exe adddriver <stage>\recline` and the overlay with
+`recline_overlay.exe --register`. Its shared memory is a session-local named
+mapping (`Local\recline_v1`), which disappears with its last user.
 
 ## Known limitations
 
