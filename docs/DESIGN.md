@@ -256,7 +256,9 @@ the slot lives in `vrclient.so`. R comes from the driver's `StateBlock`, with
 **Failure mode.** If the shim can't be injected or a check fails, passthrough is
 misaligned while reclined, as it was before. Nothing else is affected. The driver
 logs the spawn hook (`spawn injection: N/3`) in `vrserver.txt`; the shim logs
-install, validation and first rewrite to `~/.local/share/recline-vr/xrshim.log`.
+install, validation and first rewrite to `~/.local/share/recline-vr/xrshim.log`,
+which is bounded: over 64 KiB it is rotated to `xrshim.previous.log` at the next
+XRService start, and one process writes at most 16 KiB.
 
 ## Streaming to a PC
 

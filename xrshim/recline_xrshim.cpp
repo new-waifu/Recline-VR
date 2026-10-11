@@ -62,14 +62,26 @@ std::atomic<void*> g_vtbl{nullptr};      // the IVRPaths_002 vtable we validated
 
 // ---------------------------------------------------------------------------
 // Logging: append to ~/.local/share/recline-vr/xrshim.log; a few one-shot lines
-// (install, validation, first rewrite), never per call.
+// (install, validation, first rewrite), never per call. Bounded like SteamVR's
+// own client logs: at startup a log over kLogRotateBytes becomes
+// xrshim.previous.log (replacing the older one), and one process writes at
+// most kLogProcessMaxBytes, so the two files together stay under
+// 2 * (kLogRotateBytes + kLogProcessMaxBytes).
+
+constexpr long kLogRotateBytes = 64 * 1024;
+constexpr long kLogProcessMaxBytes = 16 * 1024;
 
 FILE* g_log = nullptr;
+std::atomic<long> g_logBytes{0};
+
 void LogOpen() {
   const char* home = getenv("HOME");
   if (!home) return;
-  char path[PATH_MAX];
+  char path[PATH_MAX], previous[PATH_MAX];
   snprintf(path, sizeof path, "%s/.local/share/recline-vr/xrshim.log", home);
+  snprintf(previous, sizeof previous, "%s/.local/share/recline-vr/xrshim.previous.log", home);
+  struct stat st {};
+  if (stat(path, &st) == 0 && st.st_size >= kLogRotateBytes) rename(path, previous);
   g_log = fopen(path, "ae");
 }
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -78,8 +90,10 @@ void Log(const char* fmt, ...) {
   char buf[512];
   va_list ap;
   va_start(ap, fmt);
-  vsnprintf(buf, sizeof buf, fmt, ap);
+  const int n = vsnprintf(buf, sizeof buf, fmt, ap);
   va_end(ap);
+  const long len = (n < 0 ? 0 : n < int(sizeof buf) ? n : int(sizeof buf) - 1) + 10;
+  if (g_logBytes.fetch_add(len, std::memory_order_relaxed) + len > kLogProcessMaxBytes) return;
   fprintf(g_log, "[xrshim] %s\n", buf);
   fflush(g_log);
 }
