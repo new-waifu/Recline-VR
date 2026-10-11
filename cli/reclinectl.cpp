@@ -1,13 +1,15 @@
 // reclinectl: command-line client for driver_recline (SPEC §5.4).
 //
 //   reclinectl status
-//   reclinectl recenter [--keep-position] [--level-only] [--height M] [--no-seated-reset]
+//   reclinectl recenter [--keep-position] [--level-only] [--height M] [--head-axis]
+//                       [--no-seated-reset]
 //   reclinectl reset
 //   reclinectl set <yaw> <pitch> <roll> <x> <y> <z>     (degrees, meters)
 //   reclinectl poses      (prints device poses per tracking universe, for testing)
 
 #include <openvr.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -23,7 +25,9 @@ void Usage() {
   fprintf(stderr,
           "usage: reclinectl status\n"
           "       reclinectl recenter [--keep-position] [--level-only] [--height M]\n"
-          "                           [--no-seated-reset]\n"
+          "                           [--head-axis] [--no-seated-reset]\n"
+          "         (default levels the lens-centre view axis; --head-axis levels the\n"
+          "          head pose's forward axis instead)\n"
           "       reclinectl reset\n"
           "       reclinectl poses        (HMD/controller poses as apps see them)\n"
           "       reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   (degrees, meters)\n");
@@ -93,12 +97,13 @@ int Send(uint32_t cmd, const Rigid* payload) {
 
 int Recenter(int argc, char** argv) {
   RecenterOptions o;
-  bool seatedReset = true;
+  bool seatedReset = true, headAxis = false;
   for (int i = 0; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--keep-position") o.keepPosition = true;
     else if (a == "--level-only") o.levelOnly = true;
     else if (a == "--no-seated-reset") seatedReset = false;
+    else if (a == "--head-axis") headAxis = true;
     else if (a == "--height" && i + 1 < argc) {
       char* end;
       o.eyeHeight = strtod(argv[++i], &end);
@@ -118,6 +123,10 @@ int Recenter(int argc, char** argv) {
   if (e != vr::VRInitError_None) {
     fprintf(stderr, "error: VR_Init: %s\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
     return 1;
+  }
+  if (!headAxis) {
+    o.viewPitch = MeasureViewPitch(vr::VRSystem());
+    printf("levelling the lens-centre view axis (%.1f deg from head axis)\n", Deg(o.viewPitch));
   }
   Rigid traw;
   std::string err;
@@ -186,6 +195,58 @@ int Poses() {
       ToYawPitchRoll(r.q, &y, &p, &ro);
       printf("%-8s dev %2u class %d: yaw %7.2f pitch %7.2f roll %7.2f deg, t (%6.3f, %6.3f, %6.3f) m\n",
              un.name, i, int(cls), Deg(y), Deg(p), Deg(ro), r.t.x, r.t.y, r.t.z);
+    }
+  }
+  // Display geometry: what the HMD pose means for the rendered views.
+  for (int e = 0; e < 2; ++e) {
+    const vr::EVREye eye = e ? vr::Eye_Right : vr::Eye_Left;
+    const Rigid eh = FromMatrix34(vr::VRSystem()->GetEyeToHeadTransform(eye));
+    double y, p, ro;
+    ToYawPitchRoll(eh.q, &y, &p, &ro);
+    float l, r, t, b;
+    vr::VRSystem()->GetProjectionRaw(eye, &l, &r, &t, &b);
+    printf("%s eye-to-head: yaw %.3f pitch %.3f roll %.3f deg, t (%.4f, %.4f, %.4f) m\n",
+           e ? "right" : "left ", Deg(y), Deg(p), Deg(ro), eh.t.x, eh.t.y, eh.t.z);
+    printf("%s projection tan: left %.4f right %.4f top %.4f bottom %.4f -> "
+           "fov h %.1f..%.1f v %.1f..%.1f deg, vertical centre %.2f deg\n",
+           e ? "right" : "left ", l, r, t, b, Deg(std::atan(l)), Deg(std::atan(r)),
+           Deg(std::atan(t)), Deg(std::atan(b)), Deg(std::atan(0.5 * (t + b))));
+  }
+  const struct {
+    vr::ETrackedDeviceProperty p;
+    const char* name;
+  } props[] = {{vr::Prop_LensCenterLeftU_Float, "LensCenterLeftU"},
+               {vr::Prop_LensCenterLeftV_Float, "LensCenterLeftV"},
+               {vr::Prop_LensCenterRightU_Float, "LensCenterRightU"},
+               {vr::Prop_LensCenterRightV_Float, "LensCenterRightV"},
+               {vr::Prop_ScreenshotVerticalFieldOfViewDegrees_Float, "ScreenshotVFovDeg"},
+               {vr::Prop_DisplayFrequency_Float, "DisplayHz"}};
+  for (const auto& pr : props) {
+    vr::ETrackedPropertyError pe;
+    const float v = vr::VRSystem()->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd, pr.p, &pe);
+    if (pe == vr::TrackedProp_Success) printf("%s = %.4f\n", pr.name, v);
+    else printf("%s: %s\n", pr.name, vr::VRSystem()->GetPropErrorNameFromEnum(pe));
+  }
+  for (int e = 0; e < 2; ++e) {
+    const vr::EVREye eye = e ? vr::Eye_Right : vr::Eye_Left;
+    const vr::HmdMatrix44_t P = vr::VRSystem()->GetProjectionMatrix(eye, 0.1f, 100.0f);
+    // Forward axis (0,0,-1) in NDC: x = -m[0][2], y = -m[1][2] (w = 1).
+    printf("view pitch (lens centre vs head axis, both eyes): %.2f deg\n",
+           Deg(MeasureViewPitch(vr::VRSystem())));
+    printf("%s projection: m11 %.4f m12 %.4f -> forward axis at NDC y %+.4f (y up)\n",
+           e ? "right" : "left ", P.m[1][1], P.m[1][2], -P.m[1][2]);
+    vr::ETrackedPropertyError pe;
+    const float lu = vr::VRSystem()->GetFloatTrackedDeviceProperty(
+        0, e ? vr::Prop_LensCenterRightU_Float : vr::Prop_LensCenterLeftU_Float, &pe);
+    const float lv = vr::VRSystem()->GetFloatTrackedDeviceProperty(
+        0, e ? vr::Prop_LensCenterRightV_Float : vr::Prop_LensCenterLeftV_Float, &pe);
+    for (float v : {0.0f, 0.5f, 1.0f, lv}) {
+      vr::DistortionCoordinates_t dc;
+      if (vr::VRSystem()->ComputeDistortion(eye, v == lv ? lu : 0.5f, v, &dc))
+        printf("  distortion(u %.4f, v %.4f) -> render uv green (%.4f, %.4f)\n",
+               v == lv ? lu : 0.5f, v, dc.rfGreen[0], dc.rfGreen[1]);
+      else
+        printf("  ComputeDistortion unavailable\n");
     }
   }
   vr::VR_Shutdown();

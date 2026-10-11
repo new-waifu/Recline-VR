@@ -21,6 +21,31 @@ inline bool GetHmdPose(vr::IVRSystem* sys, vr::ETrackingUniverseOrigin uni, Rigi
   return true;
 }
 
+// View pitch of the lens centre relative to the head axis, averaged over both
+// eyes (see ViewPitchFromProjection). Returns 0 if nothing usable is reported.
+inline double MeasureViewPitch(vr::IVRSystem* sys) {
+  double sum = 0;
+  int n = 0;
+  for (int e = 0; e < 2; ++e) {
+    const vr::EVREye eye = e ? vr::Eye_Right : vr::Eye_Left;
+    const vr::HmdMatrix44_t P = sys->GetProjectionMatrix(eye, 0.1f, 100.0f);
+    if (!(P.m[1][1] > 0)) continue;
+    double lensV = 0.5;
+    vr::ETrackedPropertyError eu, ev;
+    const float lu = sys->GetFloatTrackedDeviceProperty(
+        vr::k_unTrackedDeviceIndex_Hmd, e ? vr::Prop_LensCenterRightU_Float : vr::Prop_LensCenterLeftU_Float, &eu);
+    const float lv = sys->GetFloatTrackedDeviceProperty(
+        vr::k_unTrackedDeviceIndex_Hmd, e ? vr::Prop_LensCenterRightV_Float : vr::Prop_LensCenterLeftV_Float, &ev);
+    vr::DistortionCoordinates_t dc;
+    if (eu == vr::TrackedProp_Success && ev == vr::TrackedProp_Success &&
+        sys->ComputeDistortion(eye, lu, lv, &dc) && dc.rfGreen[1] > 0 && dc.rfGreen[1] < 1)
+      lensV = dc.rfGreen[1];
+    sum += ViewPitchFromProjection(P.m[1][1], P.m[1][2], lensV);
+    ++n;
+  }
+  return n ? sum / n : 0.0;
+}
+
 inline bool BuildTraw(vr::IVRSystem* sys, const RecenterOptions& o, Rigid* out, std::string* err) {
   Rigid S_cur, P_cur;
   if (!GetHmdPose(sys, vr::TrackingUniverseStanding, &S_cur) ||

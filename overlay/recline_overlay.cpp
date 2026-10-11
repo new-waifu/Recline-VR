@@ -28,7 +28,7 @@ using namespace recline;
 
 constexpr const char* kAppKey = "user.recline.overlay";
 constexpr const char* kOverlayKey = "user.recline.overlay.dashboard";
-constexpr int kW = 1024, kH = 640;
+constexpr int kW = 1024, kH = 700;
 
 const recline_font::FontFace& kSmall = recline_font::kFace22;
 const recline_font::FontFace& kBig = recline_font::kFace34;
@@ -123,6 +123,7 @@ int Unregister(const std::string& manifest) {
 struct Options {
   RecenterOptions rc;
   bool seatedReset = true;
+  bool headAxis = false;  // level the head axis instead of the lens-centre view axis
 };
 
 std::string ConfigPath() {
@@ -143,6 +144,7 @@ void LoadOptions(Options* o) {
     else if (k == "keepPosition") o->rc.keepPosition = v != 0;
     else if (k == "eyeHeight" && v >= 0.2 && v <= 2.5) o->rc.eyeHeight = v;
     else if (k == "seatedReset") o->seatedReset = v != 0;
+    else if (k == "headAxis") o->headAxis = v != 0;
   }
   fclose(f);
 }
@@ -154,8 +156,8 @@ void SaveOptions(const Options& o) {
   mkdir(dir.c_str(), 0700);
   FILE* f = fopen(path.c_str(), "w");
   if (!f) return;
-  fprintf(f, "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\n", o.rc.levelOnly,
-          o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset);
+  fprintf(f, "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\nheadAxis=%d\n",
+          o.rc.levelOnly, o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset, o.headAxis);
   fclose(f);
 }
 
@@ -190,6 +192,8 @@ class App {
       fprintf(stderr, "renderer: %s\n", renderer_.c_str());
     }
 
+    viewPitch_ = MeasureViewPitch(vr::VRSystem());
+    fprintf(stderr, "lens-centre view pitch: %.2f deg\n", Deg(viewPitch_));
     SetupInput();
     OpenShmIfNeeded();
     RefreshStatus();
@@ -316,9 +320,11 @@ class App {
   void DoRecenter() {
     OpenShmIfNeeded();
     if (!shm_) return SetMessage("Shared memory unavailable: " + shmError_, kBad);
+    RecenterOptions rc = opt_.rc;
+    rc.viewPitch = opt_.headAxis ? 0.0 : viewPitch_;
     Rigid traw;
     std::string err;
-    if (!BuildTraw(vr::VRSystem(), opt_.rc, &traw, &err)) return SetMessage(err, kBad);
+    if (!BuildTraw(vr::VRSystem(), rc, &traw, &err)) return SetMessage(err, kBad);
     const SendResult r = SendCommand(shm_, CMD_RECENTER, &traw);
     if (r != SendResult::Ok) return SetMessage(std::string("Recenter failed: ") + SendResultText(r), kBad);
     if (opt_.seatedReset) {
@@ -359,7 +365,7 @@ class App {
 
   enum Hit {
     kHitNone, kHitRecenter, kHitReset, kHitRotFull, kHitRotLevel, kHitPosHeight, kHitPosKeep,
-    kHitHeightMinus, kHitHeightPlus, kHitSeated
+    kHitHeightMinus, kHitHeightPlus, kHitSeated, kHitRefLens, kHitRefHead
   };
 
   void OnClick(int x, int y) {
@@ -375,6 +381,8 @@ class App {
         case kHitHeightMinus: opt_.rc.eyeHeight = std::max(0.2, opt_.rc.eyeHeight - 0.05); break;
         case kHitHeightPlus: opt_.rc.eyeHeight = std::min(2.5, opt_.rc.eyeHeight + 0.05); break;
         case kHitSeated: opt_.seatedReset = !opt_.seatedReset; break;
+        case kHitRefLens: opt_.headAxis = false; break;
+        case kHitRefHead: opt_.headAxis = true; break;
         default: return;
       }
       SaveOptions(opt_);
@@ -416,15 +424,21 @@ class App {
     c.TextCentered({730, y, 130, 46}, buf, kSmall, opt_.rc.keepPosition ? kDim : kText);
     Button({860, y, 50, 46}, "+", kHitHeightPlus, false);
     y += 58;
+    c.Text(32, y + 12, "Level ref", kSmall, kDim);
+    Button({200, y, 220, 46}, "Lens centre", kHitRefLens, !opt_.headAxis);
+    Button({430, y, 220, 46}, "Head axis", kHitRefHead, opt_.headAxis);
+    snprintf(buf, sizeof buf, "view axis %.1f deg", Deg(viewPitch_));
+    c.Text(680, y + 12, buf, kSmall, opt_.headAxis ? kDim : kText);
+    y += 58;
     Button({32, y + 6, 34, 34}, opt_.seatedReset ? "x" : "", kHitSeated, opt_.seatedReset);
     c.Text(80, y + 12, "Also reset seated zero pose after recenter", kSmall, kText);
 
     // Status panel
-    y += 60;
+    y += 54;
     c.FillRect({32, y, kW - 64, kH - y - 24}, kPanel);
     int ty = y + 12;
     auto line = [&](const std::string& s, Color col) {
-      if (ty + kSmall.cellH > kH - 34 - kSmall.cellH) return;  // keep the renderer label clear
+      if (ty + kSmall.cellH > kH - 28) return;
       c.Text(48, ty, s, kSmall, col);
       ty += kSmall.cellH + 3;
     };
@@ -461,8 +475,6 @@ class App {
       line("PC Space Calibrator calibration is invalid while reclined.", kDim);
     }
     if (!message_.empty()) line(message_, messageColor_);
-    c.Text(kW - 32 - Canvas::TextWidth(renderer_, kSmall) , kH - 24 - kSmall.cellH - 6, renderer_,
-           kSmall, Color{90, 96, 110, 255});
 
     Upload();
   }
@@ -531,7 +543,8 @@ class App {
   std::vector<uint8_t> uploaded_;  // last pixels sent to SteamVR
   VkOverlayTexture vk_;
   bool vkOk_ = false;
-  std::string renderer_;
+  std::string renderer_;  // logged to stderr
+  double viewPitch_ = 0;  // lens-centre view axis vs head axis (rad)
   double lastUpload_ = 0;
   bool uploadPending_ = false;
   std::string message_;

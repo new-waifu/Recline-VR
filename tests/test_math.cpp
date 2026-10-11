@@ -146,6 +146,33 @@ static void TestRecenterPipeline() {
   }
 }
 
+// With a view axis below the head axis, the recentered *view* axis must be
+// level and forward (Full) or level (Level only).
+static void TestViewPitch() {
+  // Steam Frame left eye: m11 0.6905, m12 -0.1846, lens centre at v 0.4983.
+  const double vp = ViewPitchFromProjection(0.6905, -0.1846, 0.4983);
+  CHECK(std::fabs(Deg(vp) + 14.7) < 0.2, "frame view pitch %.2f deg", Deg(vp));
+  CHECK(std::fabs(ViewPitchFromProjection(0.7, 0.0, 0.5)) < 1e-12, "symmetric frustum");
+  for (int i = 0; i < 1000; ++i) {
+    const Rigid S_cur{RandQ(), RandV()};
+    const Rigid Z{AxisAngle({0, 1, 0}, U(-3, 3)), RandV()};
+    const Rigid P_cur = Compose(Z, S_cur);
+    RecenterOptions o;
+    o.levelOnly = i % 2;
+    o.viewPitch = Rad(U(-20, 5));
+    const Rigid Traw = ComputeTraw(S_cur, P_cur, o);
+    const Rigid S_new = Compose(Inverse(Z), Traw);
+    const Quat view = S_new.q * AxisAngle({1, 0, 0}, o.viewPitch);
+    const Vec3 fwd = Rotate(view, {0, 0, -1}), up = Rotate(view, {0, 1, 0});
+    CHECK(std::fabs(fwd.y) < 1e-9 && Length(up - Vec3{0, 1, 0}) < 1e-9, "view axis level");
+    if (!o.levelOnly) CHECK(Length(fwd - Vec3{0, 0, -1}) < 1e-9, "view axis forward");
+    else {
+      const Quat oldView = S_cur.q * AxisAngle({1, 0, 0}, o.viewPitch);
+      CHECK(AngleBetween(view, LevelOnly(oldView)) < 1e-9, "level-only keeps view heading");
+    }
+  }
+}
+
 static void TestDebugPitch() {
   // Debug pitch about the head position keeps the head position fixed.
   const Vec3 h{0.3, 1.1, -0.4};
@@ -167,6 +194,7 @@ int main() {
   TestBasics();
   TestLevelOnly();
   TestRecenterPipeline();
+  TestViewPitch();
   TestDebugPitch();
   TestSanity();
   if (g_fail) {
