@@ -199,7 +199,7 @@ class App {
         RefreshStatus();
         dirty_ = true;
       }
-      if (dirty_ && ov->IsOverlayVisible(main_)) Render();
+      if ((dirty_ || uploadPending_) && ov->IsOverlayVisible(main_)) Render();
       usleep(20000);
     }
     vr::VR_Shutdown();
@@ -259,6 +259,7 @@ class App {
         }
         case vr::VREvent_OverlayShown:
           dirty_ = true;
+          uploaded_.clear();
           break;
         case vr::VREvent_Quit:
           quit_ = true;
@@ -454,7 +455,27 @@ class App {
     }
     if (!message_.empty()) line(message_, messageColor_);
 
-    vr::VROverlay()->SetOverlayRaw(main_, c.MutableData(), kW, kH, 4);
+    Upload();
+  }
+
+  // Every SetOverlayRaw replaces the overlay's texture, which the compositor
+  // shows as a flicker. Only upload when the pixels changed, and rate-limit;
+  // a throttled change stays pending and goes out on a later loop pass.
+  void Upload() {
+    const double now = MonotonicSeconds();
+    const size_t n = size_t(kW) * kH * 4;
+    if (uploaded_.size() == n && memcmp(uploaded_.data(), canvas_.Data(), n) == 0) {
+      uploadPending_ = false;
+      return;
+    }
+    if (now - lastUpload_ < kMinUploadInterval) {
+      uploadPending_ = true;
+      return;
+    }
+    uploaded_.assign(canvas_.Data(), canvas_.Data() + n);
+    lastUpload_ = now;
+    uploadPending_ = false;
+    vr::VROverlay()->SetOverlayRaw(main_, uploaded_.data(), kW, kH, 4);
   }
 
   void RenderThumbnail() {
@@ -490,6 +511,10 @@ class App {
   // left; our canvas is top-down. Override with RECLINE_MOUSE_FLIP_Y=0.
   bool flipMouseY_ = true;
   bool dirty_ = true, quit_ = false;
+  static constexpr double kMinUploadInterval = 0.1;  // s
+  std::vector<uint8_t> uploaded_;  // last pixels sent to SteamVR
+  double lastUpload_ = 0;
+  bool uploadPending_ = false;
   std::string message_;
   Color messageColor_ = kText;
 };
