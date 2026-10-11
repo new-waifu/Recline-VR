@@ -1,7 +1,7 @@
 #include "vk_texture.h"
 
-#if __has_include(<vulkan/vulkan.h>)
-#define RECLINE_HAVE_VULKAN 1
+// RECLINE_HAVE_VULKAN is set by the build when the Vulkan headers were found.
+#ifdef RECLINE_HAVE_VULKAN
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 
@@ -14,7 +14,7 @@
 
 namespace recline {
 
-#if RECLINE_HAVE_VULKAN
+#ifdef RECLINE_HAVE_VULKAN
 
 
 // `VkFooInfo x{sType}` value-initializes the remaining fields, as intended.

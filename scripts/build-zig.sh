@@ -3,7 +3,8 @@
 # alternative to building on the device with CMake. Produces the
 # same staged layout as the CMake build in $OUT (default: build-aarch64/stage).
 #
-#   ZIG=/path/to/zig OPENVR_LIB_DIR=../dev/opt/steamvr/bin/linuxarm64 scripts/build-zig.sh
+#   ZIG=/path/to/zig OPENVR_LIB_DIR=../dev/opt/steamvr/bin/linuxarm64 \
+#     VULKAN_INC=/path/to/Vulkan-Headers/include scripts/build-zig.sh
 #
 # Zig links its own libc++ statically, so the outputs only need glibc.
 set -eu
@@ -13,6 +14,9 @@ TARGET=${TARGET:-aarch64-linux-gnu.2.39}
 OPENVR_INC=${OPENVR_INC:-$ROOT/third_party/openvr}
 OPENVR_LIB_DIR=${OPENVR_LIB_DIR:-$ROOT/../dev/opt/steamvr/bin/linuxarm64}
 OUT=${OUT:-$ROOT/build-aarch64/stage}
+# Zig doesn't search the host's /usr/include, so the overlay's Vulkan headers
+# (header-only use; libvulkan is dlopen'ed) must be given explicitly.
+VULKAN_INC=${VULKAN_INC:?set VULKAN_INC to a directory containing vulkan/vulkan.h}
 CXXFLAGS="-std=c++20 -O2 -g -Wall -Wextra -Wno-unused-parameter -DRECLINE_FRAME -I$ROOT/common -I$OPENVR_INC"
 
 mkdir -p "$OUT/recline/bin/linuxarm64"
@@ -58,6 +62,6 @@ driver recline "$ROOT/driver/driver_recline.cpp" "$ROOT/common/slot_patch.cpp" \
   "$ROOT/driver/spawn_inject.cpp" "$SHM"
 shim "$ROOT/xrshim/recline_xrshim.cpp" "$ROOT/common/slot_patch.cpp" "$SHM"
 app recline_overlay -I"$ROOT/overlay" "$ROOT/overlay/recline_overlay.cpp" \
-  "$ROOT/overlay/vk_texture.cpp" "$CLIENT" "$SHM"
+  "$ROOT/overlay/vk_texture.cpp" "$CLIENT" "$SHM" -DRECLINE_HAVE_VULKAN -isystem "$VULKAN_INC"
 app reclinectl "$ROOT/cli/reclinectl.cpp" "$CLIENT" "$SHM"
 echo "built into $OUT"
