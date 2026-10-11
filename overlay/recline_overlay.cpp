@@ -20,6 +20,7 @@
 
 #include "canvas.h"
 #include "recline_client.h"
+#include "vk_texture.h"
 
 namespace {
 
@@ -182,6 +183,12 @@ class App {
     vr::HmdVector2_t scale{{float(kW), float(kH)}};
     ov->SetOverlayMouseScale(main_, &scale);
     RenderThumbnail();
+    {
+      std::string err;
+      vkOk_ = vk_.Init(kW, kH, &err);
+      renderer_ = vkOk_ ? "Vulkan texture" : "SetOverlayRaw (" + err + ")";
+      fprintf(stderr, "renderer: %s\n", renderer_.c_str());
+    }
 
     SetupInput();
     OpenShmIfNeeded();
@@ -417,7 +424,7 @@ class App {
     c.FillRect({32, y, kW - 64, kH - y - 24}, kPanel);
     int ty = y + 12;
     auto line = [&](const std::string& s, Color col) {
-      if (ty + kSmall.cellH > kH - 28) return;
+      if (ty + kSmall.cellH > kH - 34 - kSmall.cellH) return;  // keep the renderer label clear
       c.Text(48, ty, s, kSmall, col);
       ty += kSmall.cellH + 3;
     };
@@ -454,6 +461,8 @@ class App {
       line("PC Space Calibrator calibration is invalid while reclined.", kDim);
     }
     if (!message_.empty()) line(message_, messageColor_);
+    c.Text(kW - 32 - Canvas::TextWidth(renderer_, kSmall) , kH - 24 - kSmall.cellH - 6, renderer_,
+           kSmall, Color{90, 96, 110, 255});
 
     Upload();
   }
@@ -475,6 +484,13 @@ class App {
     uploaded_.assign(canvas_.Data(), canvas_.Data() + n);
     lastUpload_ = now;
     uploadPending_ = false;
+    if (vkOk_) {
+      std::string err;
+      if (vk_.Upload(main_, uploaded_.data(), &err)) return;
+      vkOk_ = false;  // fall back for good
+      renderer_ = "SetOverlayRaw (Vulkan upload failed: " + err + ")";
+      fprintf(stderr, "renderer: %s\n", renderer_.c_str());
+    }
     vr::VROverlay()->SetOverlayRaw(main_, uploaded_.data(), kW, kH, 4);
   }
 
@@ -513,6 +529,9 @@ class App {
   bool dirty_ = true, quit_ = false;
   static constexpr double kMinUploadInterval = 0.1;  // s
   std::vector<uint8_t> uploaded_;  // last pixels sent to SteamVR
+  VkOverlayTexture vk_;
+  bool vkOk_ = false;
+  std::string renderer_;
   double lastUpload_ = 0;
   bool uploadPending_ = false;
   std::string message_;
