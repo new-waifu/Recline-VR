@@ -5,7 +5,11 @@
 set -eu
 SRC=$(cd "$(dirname "$0")" && pwd)
 DEST=${DEST:-$HOME/.local/share/recline-vr}
-VRPATHREG=/opt/steamvr/bin/linuxarm64/vrpathreg
+# SteamVR's vrpathreg: the Frame's fixed location, else a PC Steam install.
+if [ -z "${VRPATHREG:-}" ]; then
+  VRPATHREG=/opt/steamvr/bin/linuxarm64/vrpathreg
+  [ -x "$VRPATHREG" ] || VRPATHREG=$HOME/.steam/steam/steamapps/common/SteamVR/bin/vrpathreg.sh
+fi
 
 # Replace each file by rename, never in place: on an update the driver and shim
 # are mapped by SteamVR and the overlay binary is running.
@@ -21,6 +25,8 @@ if [ "$SRC" != "$DEST" ]; then
            bindings_frame_controller.json bindings_knuckles.json install.sh uninstall.sh; do
     put "$f"
   done
+  # Bundled by builds that don't use the runtime's own copy (off the Frame).
+  if [ -f "$SRC/libopenvr_api.so" ]; then put libopenvr_api.so; fi
 fi
 
 "$VRPATHREG" adddriver "$DEST/recline"

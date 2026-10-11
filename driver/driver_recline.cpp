@@ -2,9 +2,10 @@
 // IVRServerDriverHost::TrackedDevicePoseUpdated through the (shared) host
 // vtable and left-multiplies every device's world-from-driver transform by a
 // rigid transform R, so the whole tracked world can be pitched/rolled, not just
-// yawed. R is controlled over the /recline_v1 shared-memory protocol. It also
-// installs the targeted spawn injection (spawn_inject.h) that loads the
-// passthrough shim into XRService, whose poses never reach this hook.
+// yawed. R is controlled over the /recline_v1 shared-memory protocol. Frame
+// builds (RECLINE_FRAME) also install the targeted spawn injection
+// (spawn_inject.h) that loads the passthrough shim into XRService, whose poses
+// never reach this hook.
 // docs/DESIGN.md explains why this approach (the official chaperone API can
 // only yaw) and the safety rules the hook follows.
 
@@ -27,7 +28,9 @@
 #include "pose_math.h"
 #include "recline_shm.h"
 #include "slot_patch.h"
+#ifdef RECLINE_FRAME
 #include "spawn_inject.h"
+#endif
 
 #define RECLINE_EXPORT extern "C" __attribute__((visibility("default")))
 
@@ -264,6 +267,7 @@ void PinSelf() {
     Log("pinned %s", info.dli_fname);
 }
 
+#ifdef RECLINE_FRAME
 // Absolute path to the XRService shim, which ships next to this driver .so
 // (.../recline/bin/linuxarm64/librecline_xrshim.so). Empty if undeterminable.
 std::string ShimPath() {
@@ -274,6 +278,7 @@ std::string ShimPath() {
   if (slash == std::string::npos) return {};
   return p.substr(0, slash + 1) + "librecline_xrshim.so";
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Driver provider
@@ -284,7 +289,9 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     VR_INIT_SERVER_DRIVER_CONTEXT(ctx);
     Log("driver_recline init (shm v%u)", kVersion);
     PinSelf();
+#ifdef RECLINE_FRAME
     shimPath_ = ShimPath();
+#endif
 
     vr::EVRSettingsError se = vr::VRSettingsError_None;
     debugPitchDeg_ = vr::VRSettings()->GetFloat(kSection, "debugPitchDeg", &se);
@@ -412,11 +419,13 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
   // loaded. It isn't present yet at our Init, so the command thread polls for
   // it; the GOT hook then persists across XRService restarts.
   void MaybeInjectSpawn() {
+#ifdef RECLINE_FRAME
     if (spawnInjectDone_ || shimPath_.empty()) return;
     if (!ModuleLoaded("libArcturusPerception.so")) return;
     const int n = InstallSpawnInjection(shimPath_, [](const std::string& m) { Log("%s", m.c_str()); });
     spawnInjectDone_ = true;  // one attempt once the module is present
     Log("spawn injection: %d/3 spawn functions hooked (shim %s)", n, shimPath_.c_str());
+#endif
   }
 
   void CommandThread() {
@@ -608,8 +617,10 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
   StateSnapshot state_;
   uint32_t lastCmdId_ = 0;
   double debugPitchDeg_ = 0;
+#ifdef RECLINE_FRAME
   std::string shimPath_;
   bool spawnInjectDone_ = false;
+#endif
   bool hmdVerified_ = false;
   double nextResolve_ = 0;
   std::atomic<bool> running_{false};

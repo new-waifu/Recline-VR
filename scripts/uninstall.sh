@@ -3,7 +3,11 @@
 # overlay unregistration step.
 set -eu
 DEST=${DEST:-$HOME/.local/share/recline-vr}
-VRPATHREG=/opt/steamvr/bin/linuxarm64/vrpathreg
+# SteamVR's vrpathreg: the Frame's fixed location, else a PC Steam install.
+if [ -z "${VRPATHREG:-}" ]; then
+  VRPATHREG=/opt/steamvr/bin/linuxarm64/vrpathreg
+  [ -x "$VRPATHREG" ] || VRPATHREG=$HOME/.steam/steam/steamapps/common/SteamVR/bin/vrpathreg.sh
+fi
 
 if pgrep -x vrserver >/dev/null 2>&1; then
   "$DEST/recline_overlay" --unregister

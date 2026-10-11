@@ -4,7 +4,7 @@
 		{
 			"app_key" : "user.recline.overlay",
 			"launch_type" : "binary",
-			"binary_path_linux_arm" : "recline_overlay",
+			"@VR_BINARY_PATH_KEY@" : "recline_overlay",
 			"is_dashboard_overlay" : true,
 			"action_manifest_path" : "actions.json",
 			"strings" : {

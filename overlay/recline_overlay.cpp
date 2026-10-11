@@ -504,7 +504,10 @@ class App {
       line("Warning: something modifies poses after recline", kWarn);
     if (active) {
       line("The boundary is drawn un-rotated while reclined.", kDim);
+#ifdef RECLINE_FRAME
+      // Streaming: trackers calibrated on the PC side never get R.
       line("PC Space Calibrator calibration is invalid while reclined.", kDim);
+#endif
     }
     if (!message_.empty()) line(message_, messageColor_);
 

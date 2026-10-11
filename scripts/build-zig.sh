@@ -13,11 +13,13 @@ TARGET=${TARGET:-aarch64-linux-gnu.2.39}
 OPENVR_INC=${OPENVR_INC:-$ROOT/third_party/openvr}
 OPENVR_LIB_DIR=${OPENVR_LIB_DIR:-$ROOT/../dev/opt/steamvr/bin/linuxarm64}
 OUT=${OUT:-$ROOT/build-aarch64/stage}
-CXXFLAGS="-std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -I$ROOT/common -I$OPENVR_INC"
+CXXFLAGS="-std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -DRECLINE_FRAME -I$ROOT/common -I$OPENVR_INC"
 
 mkdir -p "$OUT/recline/bin/linuxarm64"
 cp -r "$ROOT/packaging/recline/." "$OUT/recline/"
-cp "$ROOT"/packaging/overlay/* "$ROOT"/scripts/install.sh "$ROOT"/scripts/uninstall.sh "$OUT/"
+cp "$ROOT"/packaging/overlay/*.json "$ROOT"/scripts/install.sh "$ROOT"/scripts/uninstall.sh "$OUT/"
+sed 's/@VR_BINARY_PATH_KEY@/binary_path_linux_arm/' "$ROOT/packaging/overlay/recline_overlay.vrmanifest.in" \
+  > "$OUT/recline_overlay.vrmanifest"
 
 driver() { # name sources...
   name=$1; shift
