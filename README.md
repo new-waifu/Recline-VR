@@ -41,10 +41,9 @@ other headsets work too.
 
 **Controller shortcuts** (default bindings, changeable via the button above). On the
 right controller, hold **grip + trigger + bumper** and press **Y** to recenter, or
-**X** to reset. Valve Index: hold **grip + trigger** and press **A and B together**
-on the right controller to recenter, or on the left controller to reset. They are
-plain SteamVR chords that work while a game is running. Defaults are deliberately
-finger-twisting combinations that normal gameplay won't produce.
+**X** to reset. They are plain SteamVR chords that work while a game is running.
+Defaults are deliberately finger-twisting combinations that normal gameplay won't
+produce.
 
 **Command line** (`~/.local/share/recline-vr/reclinectl`):
 
