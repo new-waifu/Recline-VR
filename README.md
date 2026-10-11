@@ -87,5 +87,10 @@ and restart SteamVR: the world is pitched 90° about the head once the first HMD
 - Lens-centre recenter: the Frame's lens axis is ~14.4° below the head pose's forward
   axis (asymmetric frustum); recenter levels the lens axis by default.
 - Passthrough is broken while reclined (both 3D and 2D room view); under investigation separately.
-- Still open: seated-app check (§10.3, e.g. helloxr), Level only confirmation, streaming (§10.4), coexistence (§10.6),
+- §10.3 in headset: hellovr_vulkan (standing): Full / Level only / target height as
+  expected. helloxr --space Local (seated/OpenXR): with the seated option on, recenter
+  and reset both put the Local origin at the head; with it off the origin stays put.
+  (hellovr_sdl needs libGLEW.so.2.1, absent on the Frame; use
+  /opt/steamvr/tools/hellovr_vulkan_linux. helloxr exits on stdin EOF.)
+- Still open: streaming (§10.4), coexistence (§10.6),
   restart/reboot (§10.7), safe-mode message, uninstall.
