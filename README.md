@@ -70,7 +70,15 @@ and restart SteamVR: the world is pitched 90° about the head once the first HMD
 - `reclinectl recenter` also resets the seated zero pose (`--no-seated-reset` to skip), as the overlay does by default.
 - Extra setting `driver_recline.downstreamCheck` (default true) disables the §4.6 raw-pose check.
 
-## Not yet verified on device
+## Device results (2026-10-10)
 
-Everything in SPEC §10 (load, smoke, recenter, streaming, raw-pose semantics,
-coexistence, lifecycle, perf) still has to be run on the Frame.
+- §10.1 load: loads before `driver_cv` (loadPriority 100), hook installed on the
+  `r--p` vrserver vtable slot, HMD = device 0, ~1024 Hz HMD poses.
+- §10.3 recenter (numeric, via `reclinectl poses`): standing HMD becomes
+  0.00±0.01° at (0, 1.200, 0); seated becomes identity; reset restores. 63 ms round trip.
+- §10.5: `GetRawTrackedDevicePoses` returns post-world-from-driver poses (0.01 mm /
+  0.001° match), so the downstream check is active; with R = pitch 90° no conflict is
+  flagged, i.e. vrserver honors the full rotation.
+- §10.8 perf: `build/bench_hook` ≈ 92 ns per HMD call (budget 2 µs).
+- Still open: in-headset visual checks (§10.2/§10.3), overlay UI + mouse Y, controller
+  bindings, streaming (§10.4), coexistence (§10.6), restart/reboot (§10.7).

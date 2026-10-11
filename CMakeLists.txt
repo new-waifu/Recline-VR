@@ -59,7 +59,7 @@ function(recline_app target)
   target_link_libraries(${target} PRIVATE openvr_api pthread rt)
   target_link_options(${target} PRIVATE -static-libstdc++ -static-libgcc)
   set_target_properties(${target} PROPERTIES
-    BUILD_RPATH "${OPENVR_LIB_DIR}" INSTALL_RPATH "/opt/steamvr/bin/linuxarm64"
+    BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "${OPENVR_LIB_DIR}"
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stage)
   install(TARGETS ${target} RUNTIME DESTINATION .)
 endfunction()
@@ -99,4 +99,7 @@ if(RECLINE_BUILD_TESTS)
     target_link_libraries(${t} PRIVATE pthread rt)
     add_test(NAME ${t} COMMAND ${t})
   endforeach()
+  add_executable(bench_hook tests/bench_hook.cpp)
+  target_include_directories(bench_hook PRIVATE ${COMMON_INC})
+  target_compile_options(bench_hook PRIVATE ${WARN})
 endif()

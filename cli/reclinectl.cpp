@@ -4,6 +4,7 @@
 //   reclinectl recenter [--keep-position] [--level-only] [--height M] [--no-seated-reset]
 //   reclinectl reset
 //   reclinectl set <yaw> <pitch> <roll> <x> <y> <z>     (degrees, meters)
+//   reclinectl poses      (prints device poses per tracking universe, for testing)
 
 #include <openvr.h>
 
@@ -24,6 +25,7 @@ void Usage() {
           "       reclinectl recenter [--keep-position] [--level-only] [--height M]\n"
           "                           [--no-seated-reset]\n"
           "       reclinectl reset\n"
+          "       reclinectl poses        (HMD/controller poses as apps see them)\n"
           "       reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   (degrees, meters)\n");
 }
 
@@ -160,6 +162,36 @@ int Set(int argc, char** argv) {
   return Send(CMD_SET, &R);
 }
 
+int Poses() {
+  vr::EVRInitError e = vr::VRInitError_None;
+  vr::VR_Init(&e, vr::VRApplication_Background);
+  if (e != vr::VRInitError_None) {
+    fprintf(stderr, "error: VR_Init: %s\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
+    return 1;
+  }
+  const struct {
+    vr::ETrackingUniverseOrigin u;
+    const char* name;
+  } unis[] = {{vr::TrackingUniverseStanding, "standing"},
+              {vr::TrackingUniverseRawAndUncalibrated, "raw"},
+              {vr::TrackingUniverseSeated, "seated"}};
+  for (const auto& un : unis) {
+    vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
+    vr::VRSystem()->GetDeviceToAbsoluteTrackingPose(un.u, 0.0f, poses, vr::k_unMaxTrackedDeviceCount);
+    for (uint32_t i = 0; i < vr::k_unMaxTrackedDeviceCount; ++i) {
+      const auto cls = vr::VRSystem()->GetTrackedDeviceClass(i);
+      if (cls == vr::TrackedDeviceClass_Invalid || !poses[i].bPoseIsValid) continue;
+      const Rigid r = FromMatrix34(poses[i].mDeviceToAbsoluteTracking);
+      double y, p, ro;
+      ToYawPitchRoll(r.q, &y, &p, &ro);
+      printf("%-8s dev %2u class %d: yaw %7.2f pitch %7.2f roll %7.2f deg, t (%6.3f, %6.3f, %6.3f) m\n",
+             un.name, i, int(cls), Deg(y), Deg(p), Deg(ro), r.t.x, r.t.y, r.t.z);
+    }
+  }
+  vr::VR_Shutdown();
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -172,6 +204,7 @@ int main(int argc, char** argv) {
   if (c == "recenter") return Recenter(argc - 2, argv + 2);
   if (c == "reset") return Send(CMD_RESET, nullptr);
   if (c == "set") return Set(argc - 2, argv + 2);
+  if (c == "poses") return Poses();
   Usage();
   return 2;
 }
