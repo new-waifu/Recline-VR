@@ -53,7 +53,7 @@ shim() {
 SHM="$ROOT/common/recline_shm.cpp"
 CLIENT="$ROOT/common/recline_client.cpp"
 driver recline "$ROOT/driver/driver_recline.cpp" "$ROOT/common/slot_patch.cpp" \
-  "$ROOT/driver/spawn_inject.cpp" "$ROOT/driver/camera_hook.cpp" "$SHM"
+  "$ROOT/driver/spawn_inject.cpp" "$SHM"
 shim "$ROOT/xrshim/recline_xrshim.cpp" "$ROOT/common/slot_patch.cpp" "$SHM"
 app recline_overlay -I"$ROOT/overlay" "$ROOT/overlay/recline_overlay.cpp" \
   "$ROOT/overlay/vk_texture.cpp" "$CLIENT" "$SHM"

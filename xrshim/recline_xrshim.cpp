@@ -8,17 +8,22 @@
 //
 // This shim closes the gap at the source: it hooks IVRPaths::WritePathBatch in
 // XRService and rewrites rawFromMeshPose to R ∘ pose as it is written, using
-// the same R the driver reads from /recline_v1. Everything else passes through
-// untouched. It fails safe: if anything about the process, the interface
+// the same R the driver reads from /recline_v1. XRService also publishes each
+// passthrough camera frame's world-from-camera pose (same pre-R frame) through
+// IVRCameraPassthroughInternal; that pose gets the same R, so the camera image
+// is projected onto the mesh from where the camera really is. Everything else
+// passes through untouched. It fails safe: if anything about the process, the interface
 // version, or the shared memory is not exactly as expected, it does nothing and
 // forwards every call unchanged.
 //
 // It relies on two public exported symbols (VR_GetGenericInterface, VRPaths)
-// plus two internal-but-versioned details of this SteamVR build: the
-// IVRPaths_002 vtable layout (slot 1 = WritePathBatch) and the PathWrite_t
-// struct layout. Both are guarded; a mismatch disables the shim.
+// plus internal-but-versioned details of this SteamVR build: the IVRPaths_002
+// vtable layout (slot 1 = WritePathBatch, slot 2 = StringToHandle), the
+// PathWrite_t struct layout, and IVRCameraPassthroughInternal_001 slot 5 with
+// its frame-info layout. All are guarded; a mismatch leaves calls unchanged.
 
 #include <atomic>
+#include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -276,6 +281,75 @@ void Install(void* obj) {
 }
 
 // ---------------------------------------------------------------------------
+// Passthrough camera frames. XRService owns the cameras and publishes each
+// frame's metadata to the compositor through IVRCameraPassthroughInternal_001
+// slot 5: (cameraType, cameraIndex, bufferIndex, const info*), which copies
+// kCameraInfoSize bytes of `info` into the shared passthrough state. The
+// world-from-camera pose in it (row-major 3x4 at +0x30) is in the same pre-R
+// frame as rawFromMeshPose, so it gets the same R; otherwise the compositor
+// projects the camera image onto the (corrected) mesh from the wrong place.
+
+constexpr const char* kCameraPassthroughVersion = "IVRCameraPassthroughInternal_001";
+constexpr size_t kSetFrameInfoSlot = 5;
+constexpr size_t kCameraInfoSize = 0xf8;
+constexpr size_t kWorldFromCameraOffset = 0x30;
+
+using SetFrameInfoFn = uint32_t (*)(void*, uint32_t, uint32_t, uint32_t, const void*);
+std::atomic<SetFrameInfoFn> g_origSetFrameInfo{nullptr};
+std::atomic<bool> g_cameraInstalled{false};
+std::atomic<bool> g_loggedFirstCamera{false};
+
+bool IsRotation34(const float m[3][4]) {
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) {
+      double d = 0;
+      for (int k = 0; k < 3; ++k) d += double(m[k][i]) * m[k][j];  // columns orthonormal
+      if (!(std::fabs(d - (i == j ? 1.0 : 0.0)) < 1e-3)) return false;
+    }
+  for (int r = 0; r < 3; ++r)
+    if (!std::isfinite(m[r][3]) || std::fabs(m[r][3]) > 1000) return false;
+  return true;
+}
+
+uint32_t HookSetFrameInfo(void* self, uint32_t type, uint32_t cam, uint32_t buf,
+                          const void* info) {
+  const SetFrameInfoFn orig = g_origSetFrameInfo.load(std::memory_order_acquire);
+  Rigid R;
+  if (!info || !CurrentR(&R)) return orig(self, type, cam, buf, info);
+  alignas(16) unsigned char copy[kCameraInfoSize];
+  memcpy(copy, info, sizeof copy);
+  float m[3][4];
+  memcpy(m, copy + kWorldFromCameraOffset, sizeof m);
+  if (!IsRotation34(m)) return orig(self, type, cam, buf, info);  // unexpected layout
+  ApplyRToMatrix34(R, m);
+  memcpy(copy + kWorldFromCameraOffset, m, sizeof m);
+  if (!g_loggedFirstCamera.exchange(true, std::memory_order_relaxed))
+    Log("rewriting passthrough camera poses for the recline transform");
+  return orig(self, type, cam, buf, copy);
+}
+
+void InstallCamera(void* obj) {
+  if (!obj || !g_active.load(std::memory_order_relaxed)) return;
+  if (g_cameraInstalled.exchange(true, std::memory_order_acq_rel)) return;
+  void** slot;
+  void* cur;
+  std::string why, info;
+  if (!LocateVtableSlot(obj, kSetFrameInfoSlot, kVrclientModule, &slot, &cur, &why, &info)) {
+    Log("not hooking camera frames: %s (%s)", why.c_str(), info.c_str());
+    return;
+  }
+  if (cur == reinterpret_cast<void*>(&HookSetFrameInfo)) return;
+  g_origSetFrameInfo.store(reinterpret_cast<SetFrameInfoFn>(cur), std::memory_order_release);
+  std::string err;
+  if (!PatchSlot(slot, cur, reinterpret_cast<void*>(&HookSetFrameInfo), &err)) {
+    Log("camera patch failed: %s", err.c_str());
+    return;
+  }
+  Log("hooked %s slot %zu (orig=%p)%s%s", kCameraPassthroughVersion, kSetFrameInfoSlot, cur,
+      err.empty() ? "" : "; ", err.c_str());
+}
+
+// ---------------------------------------------------------------------------
 // Constructor: guard on the executable, drop our own LD_PRELOAD entry so no
 // child of XRService inherits it, and open the log.
 
@@ -329,7 +403,10 @@ SHIM_EXPORT void* VR_GetGenericInterface(const char* version, void* err) {
   if (obj && g_active.load(std::memory_order_relaxed) && version) {
     if (strcmp(version, "IVRPaths_002") == 0)
       Install(obj);
-    else if (strncmp(version, "IVRPaths_", 9) == 0)
+    else if (strcmp(version, kCameraPassthroughVersion) == 0)
+      InstallCamera(obj);
+    else if (strncmp(version, "IVRPaths_", 9) == 0 ||
+             strncmp(version, "IVRCameraPassthroughInternal_", 29) == 0)
       Log("unsupported %s requested; not hooking", version);
   }
   return obj;

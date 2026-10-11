@@ -52,7 +52,7 @@ function(recline_driver target name)
 endfunction()
 
 recline_driver(driver_recline recline driver/driver_recline.cpp common/slot_patch.cpp
-               driver/spawn_inject.cpp driver/camera_hook.cpp)
+               driver/spawn_inject.cpp)
 
 # --- XRService passthrough shim ---------------------------------------------
 # Loaded into XRService only (via the driver's targeted spawn injection) to
