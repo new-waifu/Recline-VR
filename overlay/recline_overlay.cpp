@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <limits.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -152,8 +153,16 @@ void SaveOptions(const Options& o) {
   const std::string dir = path.substr(0, path.rfind('/'));
   mkdir(dir.substr(0, dir.rfind('/')).c_str(), 0700);
   mkdir(dir.c_str(), 0700);
-  FILE* f = fopen(path.c_str(), "w");
-  if (!f) return;
+  // Explicit mode (and repair of an older file): SteamVR may launch us with
+  // umask 0, which would leave the file world-writable.
+  const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+  if (fd < 0) return;
+  fchmod(fd, 0644);
+  FILE* f = fdopen(fd, "w");
+  if (!f) {
+    close(fd);
+    return;
+  }
   fprintf(f, "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\n", o.rc.levelOnly,
           o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset);
   fclose(f);

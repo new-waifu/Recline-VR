@@ -82,7 +82,11 @@ void LogOpen() {
   snprintf(previous, sizeof previous, "%s/.local/share/recline-vr/xrshim.previous.log", home);
   struct stat st {};
   if (stat(path, &st) == 0 && st.st_size >= kLogRotateBytes) rename(path, previous);
-  g_log = fopen(path, "ae");
+  // Explicit mode: XRService runs with umask 0, so fopen would create 0666.
+  const int fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644);
+  if (fd < 0) return;
+  g_log = fdopen(fd, "a");
+  if (!g_log) close(fd);
 }
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void Log(const char* fmt, ...) {
