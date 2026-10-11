@@ -280,6 +280,26 @@ On the Frame, the PC-streaming client is an ordinary OpenVR app that reads poses
 from the compositor and sends them to the PC, so the Frame-side transform reaches
 streamed games with nothing installed on the PC. Verified in use.
 
+## Frame-specific parts
+
+Everything Frame-specific sits behind the CMake option `RECLINE_FRAME` (compile
+definition of the same name), which defaults to on for `linuxarm64` and off
+elsewhere:
+
+- the XRService passthrough shim and the driver's spawn injection that loads it;
+- linking the runtime's own `/opt/steamvr/bin/linuxarm64/libopenvr_api.so` in
+  place (off the Frame the SteamVR location varies, so the apps bundle a copy and
+  find it through an `$ORIGIN` runpath);
+- the overlay's hint about PC-side calibration while streaming.
+
+The pose hook, shared memory, recenter math, overlay and CLI are generic Linux
+code. A Linux x86-64 build compiles and links, but hasn't been tested with a PC
+headset. The overlay manifest's `binary_path` key is generated per platform
+(`binary_path_linux_arm` or `binary_path_linux`), and the install scripts find
+`vrpathreg` in `/opt/steamvr` or a Steam install (or take `$VRPATHREG`).
+Windows would be a port: the vtable-index derivation assumes the Itanium C++
+ABI, and the safety checks read `/proc/self/maps`.
+
 ## Known limitations
 
 - **Passthrough** is corrected by the XRService shim (verified in both the 3D and
