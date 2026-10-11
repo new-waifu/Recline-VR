@@ -3,7 +3,7 @@
 //   reclinectl status
 //   reclinectl recenter [--keep-position] [--level-only] [--height M] [--head-axis]
 //                       [--no-seated-reset]
-//   reclinectl reset
+//   reclinectl reset [--no-seated-reset]
 //   reclinectl set <yaw> <pitch> <roll> <x> <y> <z>     (degrees, meters)
 //   reclinectl poses      (prints device poses per tracking universe, for testing)
 
@@ -28,7 +28,7 @@ void Usage() {
           "                           [--head-axis] [--no-seated-reset]\n"
           "         (default levels the lens-centre view axis; --head-axis levels the\n"
           "          head pose's forward axis instead)\n"
-          "       reclinectl reset\n"
+          "       reclinectl reset [--no-seated-reset]\n"
           "       reclinectl poses        (HMD/controller poses as apps see them)\n"
           "       reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   (degrees, meters)\n");
 }
@@ -92,6 +92,34 @@ int Send(uint32_t cmd, const Rigid* payload) {
     return 1;
   }
   PrintR("ok, R:", st.R_q, st.R_t);
+  return 0;
+}
+
+// Reset R, then (by default) re-zero the seated universe at the current head
+// pose, as the overlay does: the recenter had moved it.
+int Reset(int argc, char** argv) {
+  bool seatedReset = true;
+  for (int i = 0; i < argc; ++i) {
+    if (std::string(argv[i]) == "--no-seated-reset") {
+      seatedReset = false;
+    } else {
+      Usage();
+      return 2;
+    }
+  }
+  const int rc = Send(CMD_RESET, nullptr);
+  if (rc != 0 || !seatedReset) return rc;
+  vr::EVRInitError e = vr::VRInitError_None;
+  vr::VR_Init(&e, vr::VRApplication_Background);
+  if (e != vr::VRInitError_None) {
+    fprintf(stderr, "warning: transform reset, but seated zero pose not reset: VR_Init: %s\n",
+            vr::VR_GetVRInitErrorAsEnglishDescription(e));
+    return 1;
+  }
+  usleep(30000);  // a couple of frames
+  vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
+  printf("seated zero pose reset\n");
+  vr::VR_Shutdown();
   return 0;
 }
 
@@ -263,7 +291,7 @@ int main(int argc, char** argv) {
   const std::string c = argv[1];
   if (c == "status") return Status();
   if (c == "recenter") return Recenter(argc - 2, argv + 2);
-  if (c == "reset") return Send(CMD_RESET, nullptr);
+  if (c == "reset") return Reset(argc - 2, argv + 2);
   if (c == "set") return Set(argc - 2, argv + 2);
   if (c == "poses") return Poses();
   Usage();

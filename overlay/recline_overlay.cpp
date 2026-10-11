@@ -342,8 +342,14 @@ class App {
     if (!shm_) return SetMessage("Shared memory unavailable: " + shmError_, kBad);
     const SendResult r = SendCommand(shm_, CMD_RESET, nullptr);
     if (r != SendResult::Ok) return SetMessage(std::string("Reset failed: ") + SendResultText(r), kBad);
+    if (opt_.seatedReset) {
+      // The seated zero was moved by the recenter; put it back in front of the
+      // user's (now normal) head pose.
+      usleep(useconds_t(2e6 / DisplayHz()));
+      vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
+    }
     Haptic();
-    SetMessage("Back to normal", kGood);
+    SetMessage(opt_.seatedReset ? "Back to normal (seated zero reset too)" : "Back to normal", kGood);
     RefreshStatus();
   }
 
@@ -431,7 +437,7 @@ class App {
     c.Text(680, y + 12, buf, kSmall, opt_.headAxis ? kDim : kText);
     y += 58;
     Button({32, y + 6, 34, 34}, opt_.seatedReset ? "x" : "", kHitSeated, opt_.seatedReset);
-    c.Text(80, y + 12, "Also reset seated zero pose after recenter", kSmall, kText);
+    c.Text(80, y + 12, "Also reset seated zero pose after recenter / reset", kSmall, kText);
 
     // Status panel
     y += 54;

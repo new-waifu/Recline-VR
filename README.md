@@ -67,7 +67,7 @@ and restart SteamVR: the world is pitched 90° about the head once the first HMD
 - **Default bindings:** long-press right `Y` = recenter, right `X` = reset (Frame
   controller); Index: right `B` / `A`. Action set uses overlay-global priority so it
   works in games, which means those long-presses are taken from the game.
-- `reclinectl recenter` also resets the seated zero pose (`--no-seated-reset` to skip), as the overlay does by default.
+- `reclinectl recenter` and `reclinectl reset` also reset the seated zero pose (`--no-seated-reset` to skip), as the overlay does by default: recenter puts seated apps level in front of you, reset puts them back in front of your normal head pose.
 - Extra setting `driver_recline.downstreamCheck` (default true) disables the §4.6 raw-pose check.
 
 ## Device results (2026-10-10)
