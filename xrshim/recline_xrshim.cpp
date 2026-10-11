@@ -12,9 +12,10 @@
 // passthrough camera frame's world-from-camera pose (same pre-R frame) through
 // IVRCameraPassthroughInternal; that pose gets the same R, so the camera image
 // is projected onto the mesh from where the camera really is. Everything else
-// passes through untouched. It fails safe: if anything about the process, the interface
-// version, or the shared memory is not exactly as expected, it does nothing and
-// forwards every call unchanged.
+// passes through untouched. It fails safe: if anything about the process, the
+// interface version, or the shared memory is not exactly as expected, it does
+// nothing and forwards every call unchanged. docs/DESIGN.md ("Passthrough")
+// explains why the fix lives here and how injection is kept out of games.
 //
 // It relies on two public exported symbols (VR_GetGenericInterface, VRPaths)
 // plus internal-but-versioned details of this SteamVR build: the IVRPaths_002
@@ -60,7 +61,8 @@ std::atomic<bool> g_installed{false};    // WritePathBatch hooked
 std::atomic<void*> g_vtbl{nullptr};      // the IVRPaths_002 vtable we validated
 
 // ---------------------------------------------------------------------------
-// Logging: append to ~/.local/share/recline-vr/xrshim.log, short, rate-limited.
+// Logging: append to ~/.local/share/recline-vr/xrshim.log; a few one-shot lines
+// (install, validation, first rewrite), never per call.
 
 FILE* g_log = nullptr;
 void LogOpen() {

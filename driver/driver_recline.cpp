@@ -2,7 +2,9 @@
 // IVRServerDriverHost::TrackedDevicePoseUpdated through the (shared) host
 // vtable and left-multiplies every device's world-from-driver transform by a
 // rigid transform R, so the whole tracked world can be pitched/rolled, not just
-// yawed. R is controlled over the /recline_v1 shared-memory protocol.
+// yawed. R is controlled over the /recline_v1 shared-memory protocol. It also
+// installs the targeted spawn injection (spawn_inject.h) that loads the
+// passthrough shim into XRService, whose poses never reach this hook.
 // docs/DESIGN.md explains why this approach (the official chaperone API can
 // only yaw) and the safety rules the hook follows.
 

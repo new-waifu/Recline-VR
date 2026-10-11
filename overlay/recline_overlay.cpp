@@ -494,7 +494,7 @@ class App {
     if (st.flags & FLAG_CONFLICT_DOWNSTREAM)
       line("Warning: something modifies poses after recline", kWarn);
     if (active) {
-      line("Boundary and passthrough are drawn un-rotated while reclined.", kDim);
+      line("The boundary is drawn un-rotated while reclined.", kDim);
       line("PC Space Calibrator calibration is invalid while reclined.", kDim);
     }
     if (!message_.empty()) line(message_, messageColor_);

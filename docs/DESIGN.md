@@ -1,9 +1,11 @@
 # Recline Recenter: design notes
 
 How and why Recline Recenter works the way it does. Observations about SteamVR
-internals were made on the Steam Frame's SteamVR build of October 2026; the code
-deliberately depends only on the public, versioned OpenVR driver ABI, never on
-build-specific addresses or byte patterns.
+internals were made on the Steam Frame's SteamVR build of October 2026. The pose
+hook deliberately depends only on the public, versioned OpenVR driver ABI, never
+on build-specific addresses or byte patterns. The passthrough fix is the one
+exception: it has to use internal (but versioned) client interfaces, and checks
+every such assumption at runtime before relying on it (see *Passthrough*).
 
 ## Goal
 
@@ -176,6 +178,86 @@ Other tools (e.g. Space Calibrator-style calibrators) may hook the same slot.
 - PC-side calibration (e.g. Space Calibrator on a streaming PC) is invalidated by a
   recenter; the overlay says so.
 
+## Passthrough
+
+**The problem.** The Frame's passthrough ("room view") is produced by `XRService`,
+a separate process that `driver_cv` launches. It owns the cameras and does the
+tracking, and it publishes two poses to the compositor:
+
+- the room-view mesh pose, as the vrpaths property `/meshData/rawFromMeshPose`
+  (written with `IVRPaths_002::WritePathBatch`);
+- each camera frame's world-from-camera pose, in the frame metadata it hands to
+  `IVRCameraPassthroughInternal_001` (which vrclient copies into the shared state
+  the compositor reads).
+
+Both are in driver-world, i.e. *before* R, and neither goes through
+`TrackedDevicePoseUpdated`. The compositor combines them with the HMD pose, which
+does include R, so while reclined the mesh and the camera image are both off by R:
+the room appears tilted by the recline angle, and where the image lands on the
+wrong geometry it warps.
+
+Both poses are effectively head-relative. Measured live, the mesh pose is
+`H_capture ∘ C` and each camera pose `H_capture ∘ E`, where H is the driver-world
+head pose and C, E are fixed mount offsets. With both corrected to `R ∘ pose`, the
+compositor renders `(R ∘ H_now)⁻¹ ∘ R ∘ H_capture ∘ C = H_now⁻¹ ∘ H_capture ∘ C`.
+R cancels, and passthrough looks exactly as it does when not reclined.
+
+**Why the fix lives in XRService.** XRService is statically linked: its only
+dynamic imports besides libc and ML runtimes are the OpenVR client entry points.
+The poses are computed in stripped code with no seam to interpose, and after
+vrclient the compositor reads shared memory directly. The two vrclient calls above
+are the narrowest boundary there is, and they run inside XRService.
+
+**Getting a shim into XRService and nowhere else.** Loading an unexpected library
+into a game can trip anticheat, so `librecline_xrshim.so` must never reach a game:
+
+- Steam games aren't descendants of vrserver at all (vrserver and Steam are both
+  children of `systemd --user`), so vrserver's environment never reaches them. It
+  can still launch other programs (vrmanifest apps, overlays), so its global
+  environment is never modified.
+- `libArcturusPerception.so` (loaded into vrserver by `driver_cv`) spawns XRService
+  through `posix_spawnp`, with `posix_spawn` and `execvp` as fallbacks. Once that
+  library is loaded, the driver's command thread patches its PLT/GOT slots for
+  those three functions (found by symbol name through `dl_iterate_phdr`). The
+  wrappers add `LD_PRELOAD=<shim>` only when the program's basename is `XRService`;
+  every other spawn passes through untouched. The library is lazily bound, so
+  the real functions come from `dlsym(RTLD_NEXT, …)`, not from the slot (which
+  holds the PLT resolver until first use). The patch persists across XRService
+  restarts.
+- The shim does nothing unless `/proc/self/exe` is `…/drivers/cv/bin/linuxarm64/XRService`,
+  and removes itself from `LD_PRELOAD` at load so XRService's own children don't
+  inherit it.
+
+**What the shim does.** It interposes `VR_GetGenericInterface` and `VRPaths`
+(exported by `libopenvr_api.so`; the real ones come from `RTLD_NEXT`) and patches
+the vtables of the interfaces it recognises, in place and only after validating
+the slot lives in `vrclient.so`. R comes from the driver's `StateBlock`, with
+`/recline_v1` mapped read-only.
+
+- *Mesh:* `IVRPaths_002` slot 1 (`WritePathBatch`). XRService writes by path
+  handle, so the shim resolves the handle for `/meshData/rawFromMeshPose` through
+  slot 2 (`StringToHandle`). It rewrites a matching entry (handle, `HmdMatrix34_t`
+  type tag, 48 bytes) on a copy of the batch. The entry layout (stride 0x38) is
+  internal, but a wrong layout can't produce that match, so it degrades to a
+  pass-through.
+- *Camera:* `IVRCameraPassthroughInternal_001` slot 5, `(cameraType, cameraIndex,
+  bufferIndex, const info*)`, copies 0xF8 bytes of `info`, with the 3x4
+  world-from-camera pose at +0x30. Neither constant is trusted. At install the copy
+  size is read back from vrclient's code (the `memcpy` size immediate) and must
+  match. Before the first rewrite, the matrix must behave like a head-mounted
+  camera: `H⁻¹ ∘ M` has to stay constant per camera, within 25 cm of the head,
+  over at least 10° of head motion (H being the driver's pre-R head pose from
+  `HmdBlock`). Until then frames pass through uncorrected, so after a SteamVR
+  start the correction begins once the head has turned a little. Any mismatch
+  disables the camera hook for that XRService run. The rewrite is made on a copy.
+- Unknown interface versions are never hooked. Valve bumps these version strings
+  when a layout changes, so an update normally just turns the fix off.
+
+**Failure mode.** If the shim can't be injected or a check fails, passthrough is
+misaligned while reclined, as it was before. Nothing else is affected. The driver
+logs the spawn hook (`spawn injection: N/3`) in `vrserver.txt`; the shim logs
+install, validation and first rewrite to `~/.local/share/recline-vr/xrshim.log`.
+
 ## Streaming to a PC
 
 On the Frame, the PC-streaming client is an ordinary OpenVR app that reads poses
@@ -184,8 +266,9 @@ streamed games with nothing installed on the PC. This is not yet verified.
 
 ## Known limitations
 
-- **Passthrough** is wrong while reclined, in both 3D and 2D room-view modes. The
-  camera images and room mesh are placed using poses that don't include R.
+- **Passthrough** is corrected by the XRService shim (verified in the 3D room
+  view; the 2D room-view mode is untested). If the shim isn't loaded or one of its
+  checks fails, passthrough is misaligned while reclined.
 - **Boundaries** are drawn in the un-rotated frame and look tilted while reclined.
 - **SteamVR safe mode** disables add-on drivers after a crash; the overlay reports
   the driver as not loaded.

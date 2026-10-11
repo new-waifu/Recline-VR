@@ -12,6 +12,7 @@ explains how and why.
 | Part | Path | What |
 |---|---|---|
 | `driver_recline.so` | `driver/` | SteamVR driver (adds no devices) that applies the recline rotation to every tracked device's pose. |
+| `librecline_xrshim.so` | `xrshim/` | Loaded into the Frame's `XRService` only (never into games); corrects the passthrough mesh and camera poses for the recline rotation. |
 | `recline_overlay` | `overlay/` | Dashboard panel, controller actions and haptics; `--register` / `--unregister` for SteamVR. |
 | `reclinectl` | `cli/` | Command-line client: status, recenter, reset, diagnostics. |
 | shared code | `common/` | `/recline_v1` shared-memory protocol, transform and recenter math. |
@@ -32,7 +33,7 @@ explains how and why.
   seated-space games, sims and many OpenXR titles centred on you.
 - **Edit controller bindings** opens SteamVR's binding editor directly on this app.
 - The status area shows whether the driver is loaded, the current rotation, and
-  warnings (another tool hooking poses, boundary/passthrough limitations).
+  warnings (another tool hooking poses, boundary limitations).
 
 "Level" means what you see straight through the lenses. On the Frame that is about
 14° below the headset's nominal forward axis; the offset is read from SteamVR, so
@@ -111,7 +112,9 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
 
 ## Known limitations
 
-- Passthrough is wrong while reclined (both 3D and 2D room view).
+- Passthrough is corrected in the 3D room view; the 2D room view is untested. If
+  the XRService shim can't load or its safety checks fail, passthrough is
+  misaligned while reclined (see `~/.local/share/recline-vr/xrshim.log`).
 - The boundary is drawn un-rotated and looks tilted while reclined.
 - A recenter invalidates PC-side tracker calibration (e.g. Space Calibrator) while
   streaming.
@@ -146,4 +149,9 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
 - **SteamVR restart from the headset** ends vrserver without driver cleanup (Valve's
   own driver is skipped too); only full shutdowns log the cleanup. `assert_*.dmp`
   files written at restart come from `vrdashboard` and the Steam client.
-- **Not yet tested:** streaming to a PC, the safe-mode message, uninstall.
+- **Passthrough (3D room view):** while reclined, the room view lines up with the
+  real room. The shim is mapped only into XRService (`grep -l librecline_xrshim
+  /proc/*/maps`); camera-pose validation passes in about a second of head motion
+  (cameras within 6.6 cm of the head, 0.7° spread).
+- **Not yet tested:** streaming to a PC, the safe-mode message, uninstall, 2D room
+  view.
