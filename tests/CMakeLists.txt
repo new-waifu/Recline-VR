@@ -2,7 +2,6 @@
 # a Space Calibrator-style hook installed after it. bench_hook is run by hand.
 foreach(t test_math test_shm test_pose_hook bench_hook)
   add_executable(${t} ${t}.cpp)
-  target_include_directories(${t} PRIVATE ${COMMON_INC})
   target_compile_options(${t} PRIVATE ${WARN})
   target_link_libraries(${t} PRIVATE recline_shm)
 endforeach()

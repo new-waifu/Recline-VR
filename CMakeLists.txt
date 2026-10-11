@@ -31,18 +31,16 @@ if(WIN32 AND RECLINE_FRAME)
 endif()
 
 # --- platform -----------------------------------------------------------------------
-# OS-specific code sits behind common/platform.h and driver/pose_hook.h, one
-# implementation file each per platform; this block picks them and the toolchain
-# flags.
+# OS-specific code sits behind common/platform.h and driver/pose_hook.h, with one
+# implementation file per platform (*_${RECLINE_OS}.cpp); this block picks the
+# suffix, the pose hook's backend and the toolchain flags.
 if(WIN32)
-  set(PLATFORM_SOURCES common/platform_win.cpp)
+  set(RECLINE_OS win)
   # MinHook detour, as Space Calibrator uses on Windows (see pose_hook_win.cpp).
-  set(POSE_HOOK_SOURCES driver/pose_hook_win.cpp)
   set(POSE_HOOK_LIBS minhook)
 else()
-  set(PLATFORM_SOURCES common/platform_linux.cpp)
-  set(POSE_HOOK_SOURCES driver/pose_hook_linux.cpp common/slot_patch.cpp)
-  set(POSE_HOOK_LIBS)
+  set(RECLINE_OS linux)
+  set(POSE_HOOK_LIBS recline_slot_patch)
 endif()
 
 if(MSVC)
@@ -110,106 +108,38 @@ else()
 endif()
 
 set(COMMON_INC ${CMAKE_CURRENT_SOURCE_DIR}/common ${OPENVR_INCLUDE_DIR})
+set(STAGE_DIR ${CMAKE_BINARY_DIR}/stage)
 
-# --- shared code ------------------------------------------------------------------
-# Linked into the driver as well, so: position-independent, hidden symbols.
-add_library(recline_shm STATIC common/recline_shm.cpp ${PLATFORM_SOURCES})
-target_include_directories(recline_shm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/common)
-target_compile_options(recline_shm PRIVATE ${WARN} ${HIDDEN})
-target_link_libraries(recline_shm PUBLIC Threads::Threads ${CMAKE_DL_LIBS} ${SYSTEM_LIBS})
-set_target_properties(recline_shm PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-# The pose hook (driver/pose_hook.h), shared by the driver and its test.
-add_library(recline_pose_hook STATIC ${POSE_HOOK_SOURCES})
-target_include_directories(recline_pose_hook PUBLIC ${COMMON_INC} ${CMAKE_CURRENT_SOURCE_DIR}/driver)
-target_compile_options(recline_pose_hook PRIVATE ${WARN} ${HIDDEN})
-target_link_libraries(recline_pose_hook PUBLIC recline_shm ${POSE_HOOK_LIBS})
-set_target_properties(recline_pose_hook PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-# --- drivers: self-contained .so / .dll exporting only HmdDriverFactory ----------
-function(recline_driver target name)
-  add_library(${target} SHARED ${ARGN})
-  target_include_directories(${target} PRIVATE ${COMMON_INC} ${CMAKE_CURRENT_SOURCE_DIR}/driver)
-  target_compile_options(${target} PRIVATE ${WARN} ${HIDDEN})
-  if(NOT WIN32)
-    target_link_options(${target} PRIVATE ${SHARED_LIB_LINK}
-                        -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/driver/exports.map)
-  endif()
-  target_link_libraries(${target} PRIVATE recline_shm)
-  set_target_properties(${target} PROPERTIES PREFIX "" OUTPUT_NAME driver_${name}
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stage/${name}/bin/${VR_PLATFORM}
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stage/${name}/bin/${VR_PLATFORM})
-endfunction()
-
-set(DRIVER_SOURCES driver/driver_recline.cpp)
-if(RECLINE_FRAME)
-  list(APPEND DRIVER_SOURCES driver/spawn_inject.cpp)
-endif()
-recline_driver(driver_recline recline ${DRIVER_SOURCES})
-target_link_libraries(driver_recline PRIVATE recline_pose_hook)
-if(RECLINE_FRAME)
-  target_compile_definitions(driver_recline PRIVATE RECLINE_FRAME)
-endif()
-
-# --- XRService passthrough shim ---------------------------------------------
-# Loaded into XRService only (via the driver's targeted spawn injection) to
-# correct the passthrough mesh and camera poses for the recline transform. Resolves
-# VR_GetGenericInterface / VRPaths at runtime via RTLD_NEXT, so it must NOT
-# link libopenvr_api. Ships next to the driver .so. Frame builds only.
-if(RECLINE_FRAME)
-  add_library(recline_xrshim SHARED xrshim/recline_xrshim.cpp common/slot_patch.cpp
-              common/recline_shm.cpp ${PLATFORM_SOURCES})
-  target_include_directories(recline_xrshim PRIVATE ${COMMON_INC} ${CMAKE_CURRENT_SOURCE_DIR}/driver)
-  target_compile_options(recline_xrshim PRIVATE ${WARN} ${HIDDEN})
-  target_link_options(recline_xrshim PRIVATE ${SHARED_LIB_LINK}
-                      -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/xrshim/exports.map)
-  target_link_libraries(recline_xrshim PRIVATE Threads::Threads ${CMAKE_DL_LIBS} ${SYSTEM_LIBS})
-  set_target_properties(recline_xrshim PROPERTIES OUTPUT_NAME recline_xrshim
-    POSITION_INDEPENDENT_CODE ON
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stage/recline/bin/${VR_PLATFORM})
-endif()
-
-# --- apps -----------------------------------------------------------------------
-add_library(recline_client STATIC common/recline_client.cpp)
-target_include_directories(recline_client PUBLIC ${COMMON_INC})
-target_compile_options(recline_client PRIVATE ${WARN})
-target_link_libraries(recline_client PUBLIC recline_shm)
-
+# An app linking the openvr_api loader, staged at the top of the layout.
 function(recline_app target)
   add_executable(${target} ${ARGN})
-  target_include_directories(${target} PRIVATE ${COMMON_INC})
   target_compile_options(${target} PRIVATE ${WARN})
   target_link_libraries(${target} PRIVATE recline_client ${OPENVR_API})
   target_link_options(${target} PRIVATE ${STATIC_RUNTIME})
-  set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/stage)
+  set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${STAGE_DIR})
 endfunction()
 
-recline_app(recline_overlay overlay/recline_overlay.cpp overlay/vk_texture.cpp)
-target_include_directories(recline_overlay PRIVATE overlay)
-if(Vulkan_FOUND)
-  target_link_libraries(recline_overlay PRIVATE Vulkan::Headers)
-  target_compile_definitions(recline_overlay PRIVATE RECLINE_HAVE_VULKAN)
-else()
-  message(WARNING "Vulkan headers not found: the overlay will use SetOverlayRaw, which flickers")
-endif()
+add_subdirectory(common)
+add_subdirectory(driver)
 if(RECLINE_FRAME)
-  target_compile_definitions(recline_overlay PRIVATE RECLINE_FRAME)
+  add_subdirectory(xrshim)
 endif()
-recline_app(reclinectl cli/reclinectl.cpp)
+add_subdirectory(overlay)
+add_subdirectory(cli)
 
 # --- staging ----------------------------------------------------------------------
-# ${CMAKE_BINARY_DIR}/stage is the complete install layout; on Linux its install.sh
-# copies it into place. The non-binary files are copied at configure time, so editing or
+# ${STAGE_DIR} is the complete install layout; on Linux its install.sh copies it
+# into place. The non-binary files are copied at configure time, so editing or
 # adding one re-runs configure on the next build.
 file(GLOB_RECURSE STAGED_FILES CONFIGURE_DEPENDS packaging/* scripts/*.sh)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${STAGED_FILES})
 configure_file(packaging/overlay/recline_overlay.vrmanifest.in
-               ${CMAKE_BINARY_DIR}/stage/recline_overlay.vrmanifest @ONLY)
-file(COPY packaging/recline/ DESTINATION ${CMAKE_BINARY_DIR}/stage/recline)
-file(COPY packaging/overlay/ DESTINATION ${CMAKE_BINARY_DIR}/stage
+               ${STAGE_DIR}/recline_overlay.vrmanifest @ONLY)
+file(COPY packaging/recline/ DESTINATION ${STAGE_DIR}/recline)
+file(COPY packaging/overlay/ DESTINATION ${STAGE_DIR}
      PATTERN "*.in" EXCLUDE PATTERN "*.svg" EXCLUDE)
 if(NOT WIN32)
-  file(COPY scripts/install.sh scripts/uninstall.sh DESTINATION ${CMAKE_BINARY_DIR}/stage)
+  file(COPY scripts/install.sh scripts/uninstall.sh DESTINATION ${STAGE_DIR})
 endif()
 
 # --- host unit tests (no SteamVR needed) -------------------------------------------
