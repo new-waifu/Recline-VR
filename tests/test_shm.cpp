@@ -131,9 +131,9 @@ static void TestHmdTryLock() {
   for (auto& t : ws) t.join();
   HmdSnapshot h;
   CHECK(ReadHmd(b, &h, 10), "final read");
-  CHECK((__atomic_load_n(&b.seq, __ATOMIC_RELAXED) & 1u) == 0, "seq left odd");
+  CHECK((Ld(b.seq) & 1u) == 0, "seq left odd");
   CHECK(h.q[0] == h.q[1] && h.q[1] == h.q[2] && h.q[2] == h.q[3], "torn hmd");
-  CHECK(__atomic_load_n(&b.seq, __ATOMIC_RELAXED) == uint32_t(published.load() * 2),
+  CHECK(Ld(b.seq) == uint32_t(published.load() * 2),
         "seq/published mismatch");
   printf("HmdBlock: %ld published, %ld skipped (never blocked)\n", published.load(),
          skipped.load());
@@ -141,11 +141,11 @@ static void TestHmdTryLock() {
 
 static void TestBoundedReadOnStuckWriter() {
   alignas(64) static StateBlock b{};
-  __atomic_store_n(&b.seq, 1u, __ATOMIC_RELAXED);  // writer died mid-write
+  St(b.seq, 1u);  // writer died mid-write
   StateSnapshot s;
   CHECK(!ReadState(b, &s, 16), "bounded read must give up on odd seq");
   alignas(64) static CmdBlock c{};
-  __atomic_store_n(&c.seq, 5u, __ATOMIC_RELAXED);
+  St(c.seq, 5u);
   const double t0 = MonotonicSeconds();
   CHECK(SubmitCmd(c, CMD_RESET, nullptr, nullptr, 0.2) == 0, "submit must time out");
   CHECK(MonotonicSeconds() - t0 < 1.0, "submit timeout bounded");
@@ -165,12 +165,12 @@ static void TestOpen() {
     const uint32_t id = SubmitCmd(a->cmd, CMD_RESET, nullptr, nullptr);
     CmdSnapshot c;
     CHECK(ReadCmd(b->cmd, &c) && c.cmd_id == id && c.cmd == CMD_RESET, "cross-mapping");
-    __atomic_store_n(&a->version, 2u, __ATOMIC_RELAXED);
+    St(a->version, 2u);
     CHECK(OpenShm(false, &err, name) == nullptr, "version mismatch must refuse");
     printf("version mismatch refused: %s\n", err.c_str());
     // Uninitialized segment: clients refuse, the driver takes over.
-    __atomic_store_n(&a->magic, 0u, __ATOMIC_RELAXED);
-    __atomic_store_n(&a->version, 0u, __ATOMIC_RELAXED);
+    St(a->magic, 0u);
+    St(a->version, 0u);
     CHECK(OpenShm(false, &err, name) == nullptr, "client must refuse uninitialized");
     ReclineShm* d = OpenShm(true, &err, name);
     CHECK(d && d->magic == kMagic && d->version == kVersion, "driver takeover: %s", err.c_str());

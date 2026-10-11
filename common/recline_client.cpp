@@ -1,6 +1,7 @@
 #include "recline_client.h"
 
-#include <unistd.h>
+#include <chrono>
+#include <thread>
 
 namespace recline {
 
@@ -57,7 +58,7 @@ DriverStatus QueryStatus(ReclineShm* shm, uint64_t* prevPoseCount, double aliveW
     *prevPoseCount = st.hmd.pose_count;
   } else {
     const uint64_t c0 = st.hmd.pose_count;
-    usleep(useconds_t(aliveWindowSec * 1e6));
+    std::this_thread::sleep_for(std::chrono::duration<double>(aliveWindowSec));
     ReadHmd(shm->hmd, &st.hmd);
     st.driverAlive = st.hmd.pose_count != c0;
   }
@@ -96,7 +97,7 @@ SendResult SendCommand(ReclineShm* shm, uint32_t cmd, const Rigid* payload,
         default: return SendResult::Other;
       }
     }
-    usleep(2000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
   return SendResult::Timeout;
 }

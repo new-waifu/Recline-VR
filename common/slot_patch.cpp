@@ -1,5 +1,6 @@
 #include "slot_patch.h"
 
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -135,7 +136,7 @@ bool FindPltGotSlot(const char* module, const char* symbol, void*** slotOut, voi
     return false;
   }
   *slotOut = q.slot;
-  *curOut = __atomic_load_n(q.slot, __ATOMIC_ACQUIRE);
+  *curOut = std::atomic_ref<void*>(*q.slot).load(std::memory_order_acquire);
   return true;
 }
 
@@ -160,8 +161,8 @@ bool PatchSlot(void** slot, void* expected, void* desired, std::string* err) {
     return false;
   }
   void* exp = expected;
-  const bool ok = __atomic_compare_exchange_n(slot, &exp, desired, false, __ATOMIC_RELEASE,
-                                              __ATOMIC_RELAXED);
+  const bool ok = std::atomic_ref<void*>(*slot).compare_exchange_strong(
+      exp, desired, std::memory_order_release, std::memory_order_relaxed);
   if (!(origProt & PROT_WRITE) && mprotect(reinterpret_cast<void*>(first), len, origProt) != 0)
     *err = std::string("warning: failed to restore page protection ") + m.perms + ": " +
            strerror(errno);
@@ -182,7 +183,7 @@ bool LocateVtableSlot(const void* obj, size_t index, const char* module, void***
     *why = "vtable slot is not mapped";
     return false;
   }
-  void* cur = __atomic_load_n(slot, __ATOMIC_ACQUIRE);
+  void* cur = std::atomic_ref<void*>(*slot).load(std::memory_order_acquire);
   if (!FindMapping(uintptr_t(cur), &mf)) {
     *why = "slot target is not mapped";
     return false;

@@ -3,8 +3,10 @@
 #include "recline_shm.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 
 #include <fcntl.h>
 #include <sched.h>
@@ -96,7 +98,7 @@ ReclineShm* OpenShm(bool takeOverUninitialized, std::string* err, const char* na
     // A concurrent creator may not have run ftruncate yet: wait briefly.
     for (int i = 0; i < 100; ++i) {
       if (fstat(fd, &st) == 0 && size_t(st.st_size) >= kShmSize) break;
-      usleep(10000);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if (size_t(st.st_size) < kShmSize) {
       if (err) *err = "existing /dev/shm/recline_v1 has the wrong size";
@@ -117,28 +119,28 @@ ReclineShm* OpenShm(bool takeOverUninitialized, std::string* err, const char* na
   auto* shm = static_cast<ReclineShm*>(p);
 
   if (created) {  // zero-filled by ftruncate
-    __atomic_store_n(&shm->version, kVersion, __ATOMIC_RELAXED);
-    __atomic_store_n(&shm->magic, kMagic, __ATOMIC_RELEASE);
+    St(shm->version, kVersion);
+    St(shm->magic, kMagic, std::memory_order_release);
     return shm;
   }
 
   uint32_t magic = 0;
   for (int i = 0; i < 100; ++i) {  // ~1 s
-    magic = __atomic_load_n(&shm->magic, __ATOMIC_ACQUIRE);
+    magic = Ld(shm->magic, std::memory_order_acquire);
     if (magic == kMagic) break;
-    usleep(10000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   if (magic != kMagic) {
     if (magic == 0 && takeOverUninitialized) {
-      __atomic_store_n(&shm->version, kVersion, __ATOMIC_RELAXED);
-      __atomic_store_n(&shm->magic, kMagic, __ATOMIC_RELEASE);
+      St(shm->version, kVersion);
+      St(shm->magic, kMagic, std::memory_order_release);
       return shm;
     }
     if (err) *err = "shared memory /recline_v1 was never initialized (bad magic)";
     munmap(p, kShmSize);
     return nullptr;
   }
-  const uint32_t ver = __atomic_load_n(&shm->version, __ATOMIC_RELAXED);
+  const uint32_t ver = Ld(shm->version);
   if (ver != kVersion) {
     if (err) {
       char buf[128];

@@ -13,7 +13,7 @@ TARGET=${TARGET:-aarch64-linux-gnu.2.39}
 OPENVR_INC=${OPENVR_INC:-$ROOT/third_party/openvr}
 OPENVR_LIB_DIR=${OPENVR_LIB_DIR:-$ROOT/../dev/opt/steamvr/bin/linuxarm64}
 OUT=${OUT:-$ROOT/build-aarch64/stage}
-CXXFLAGS="-std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -DRECLINE_FRAME -I$ROOT/common -I$OPENVR_INC"
+CXXFLAGS="-std=c++20 -O2 -g -Wall -Wextra -Wno-unused-parameter -DRECLINE_FRAME -I$ROOT/common -I$OPENVR_INC"
 
 mkdir -p "$OUT/recline/bin/linuxarm64"
 cp -r "$ROOT/packaging/recline/." "$OUT/recline/"

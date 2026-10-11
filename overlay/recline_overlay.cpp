@@ -7,11 +7,13 @@
 
 #include <openvr.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <limits.h>
@@ -218,7 +220,7 @@ class App {
         dirty_ = true;
       }
       if ((dirty_ || uploadPending_) && ov->IsOverlayVisible(main_)) Render();
-      usleep(20000);
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     vr::VR_Shutdown();
     return 0;
@@ -336,7 +338,7 @@ class App {
     if (r != SendResult::Ok) return SetMessage(std::string("Recenter failed: ") + SendResultText(r), kBad);
     if (opt_.seatedReset) {
       // Let the new R reach a couple of frames before sampling the seated zero.
-      usleep(useconds_t(2e6 / DisplayHz()));
+      std::this_thread::sleep_for(std::chrono::duration<double>(2.0 / DisplayHz()));
       vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
     }
     Haptic();
@@ -352,7 +354,7 @@ class App {
     if (opt_.seatedReset) {
       // The seated zero was moved by the recenter; put it back in front of the
       // user's (now normal) head pose.
-      usleep(useconds_t(2e6 / DisplayHz()));
+      std::this_thread::sleep_for(std::chrono::duration<double>(2.0 / DisplayHz()));
       vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
     }
     Haptic();

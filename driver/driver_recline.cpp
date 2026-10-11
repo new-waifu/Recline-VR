@@ -12,6 +12,7 @@
 #include <openvr_driver.h>
 
 #include <atomic>
+#include <chrono>
 #include <cinttypes>
 #include <cmath>
 #include <cstdarg>
@@ -314,8 +315,8 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       state_.cmd_ack = ss.cmd_ack;
       // A fresh driver start resets the HMD liveness block's seq if a previous
       // vrserver died holding it (hook writers are in-process only).
-      uint32_t hs = __atomic_load_n(&shm->hmd.seq, __ATOMIC_RELAXED);
-      if (hs & 1u) __atomic_store_n(&shm->hmd.seq, hs + 1, __ATOMIC_RELEASE);
+      uint32_t hs = Ld(shm->hmd.seq);
+      if (hs & 1u) St(shm->hmd.seq, hs + 1, std::memory_order_release);
     }
     WriteLocalR(Rigid{});
     state_.hmd_index = g_hmdIndex.load();
@@ -351,7 +352,7 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     // installed after us may still call into PoseHook.
     g_disabled.store(true, std::memory_order_release);
     if (g_hookInstalled.load() && g_slot) {
-      void* cur = __atomic_load_n(g_slot, __ATOMIC_ACQUIRE);
+      void* cur = std::atomic_ref<void*>(*g_slot).load(std::memory_order_acquire);
       if (cur == reinterpret_cast<void*>(&PoseHook)) {
         std::string err;
         if (PatchSlot(g_slot, cur, reinterpret_cast<void*>(g_prev.load()), &err))
@@ -443,15 +444,15 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
         // Crashed-writer recovery: release a seq stuck at the same odd value
         // for > 1 s; the (possibly torn) payload is then validated like any
         // other command.
-        const uint32_t s = __atomic_load_n(&shm_->cmd.seq, __ATOMIC_RELAXED);
+        const uint32_t s = Ld(shm_->cmd.seq);
         if (s & 1u) {
           if (s != staleSeq) {
             staleSeq = s;
             staleSince = now;
           } else if (now - staleSince > 1.0) {
             uint32_t exp = s;
-            if (__atomic_compare_exchange_n(&shm_->cmd.seq, &exp, s + 1, false,
-                                            __ATOMIC_RELEASE, __ATOMIC_RELAXED))
+            if (Atomic(shm_->cmd.seq).compare_exchange_strong(exp, s + 1, std::memory_order_release,
+                                                              std::memory_order_relaxed))
               Log("command block was left locked by a crashed writer; released");
             staleSeq = 0;
           }
@@ -475,7 +476,7 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
         // wrapped: someone replaced our slot entry, so their transform is applied
         // before R. Expected (e.g. a calibrator), but reported.
         if (g_hookInstalled.load() && g_slot) {
-          void* cur = __atomic_load_n(g_slot, __ATOMIC_RELAXED);
+          void* cur = std::atomic_ref<void*>(*g_slot).load(std::memory_order_relaxed);
           if (cur != reinterpret_cast<void*>(&PoseHook)) flags |= FLAG_WRAPPED;
           else flags &= ~FLAG_WRAPPED;
         }
@@ -513,7 +514,7 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       }
 
       if (stateDirty && shm_) WriteState(shm_->state, state_);
-      usleep(10000);  // ~100 Hz
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));  // ~100 Hz
     }
   }
 

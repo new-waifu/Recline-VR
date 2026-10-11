@@ -10,13 +10,14 @@
 
 #include <openvr.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 
-#include <unistd.h>
 
 #include "recline_client.h"
 
@@ -58,7 +59,7 @@ int Status() {
   HmdSnapshot h0;
   ReadHmd(shm->hmd, &h0);
   const double t0 = MonotonicSeconds();
-  usleep(500000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
   uint64_t prevCount = h0.pose_count;
   DriverStatus st = QueryStatus(shm, &prevCount);
   const double dt = MonotonicSeconds() - t0;
@@ -67,7 +68,7 @@ int Status() {
     return 1;
   }
   const auto& s = st.state;
-  printf("shm:             %s v%u\n", kShmName, __atomic_load_n(&shm->version, __ATOMIC_RELAXED));
+  printf("shm:             %s v%u\n", kShmName, Ld(shm->version));
   printf("driver alive:    %s\n", st.driverAlive ? "yes" : "NO (pose_count not advancing)");
   printf("flags:           0x%x%s%s%s%s%s\n", s.flags,
          s.flags & FLAG_HOOK_INSTALLED ? " hook_installed" : "",
@@ -121,7 +122,7 @@ int Reset(int argc, char** argv) {
             vr::VR_GetVRInitErrorAsEnglishDescription(e));
     return 1;
   }
-  usleep(30000);  // a couple of frames
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));  // a couple of frames
   vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
   printf("seated zero pose reset\n");
   vr::VR_Shutdown();
@@ -176,7 +177,7 @@ int Recenter(int argc, char** argv) {
     } else {
       PrintR("ok, R:", st.R_q, st.R_t);
       if (seatedReset) {
-        usleep(30000);  // a couple of frames
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));  // a couple of frames
         vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
         printf("seated zero pose reset\n");
       }

@@ -101,8 +101,7 @@ const ReclineShm* OpenShmReadOnly() {
   close(fd);
   if (p == MAP_FAILED) return nullptr;
   auto* shm = static_cast<const ReclineShm*>(p);
-  if (__atomic_load_n(&shm->magic, __ATOMIC_ACQUIRE) != kMagic ||
-      __atomic_load_n(&shm->version, __ATOMIC_RELAXED) != kVersion) {
+  if (Ld(shm->magic, std::memory_order_acquire) != kMagic || Ld(shm->version) != kVersion) {
     munmap(p, kShmSize);
     return nullptr;
   }

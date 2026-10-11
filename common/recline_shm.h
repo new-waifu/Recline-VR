@@ -1,9 +1,11 @@
 // Shared-memory protocol /recline_v1 between driver_recline and its clients
 // (recline_overlay, reclinectl, the XRService shim); see docs/DESIGN.md,
-// "Shared-memory protocol". Doubles go through the generic __atomic_load /
-// __atomic_store builtins, plain lock-free 64-bit accesses on aarch64/x86-64.
+// "Shared-memory protocol". Fields are plain integers and doubles (the layout is
+// pinned below) accessed through std::atomic_ref, which compiles to plain
+// lock-free loads and stores on aarch64/x86-64.
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
@@ -76,9 +78,9 @@ static_assert(offsetof(HmdBlock, q) == 8 && offsetof(HmdBlock, time) == 64 &&
               "layout");
 
 // Lock-based atomics would not work across processes.
-static_assert(__atomic_always_lock_free(sizeof(uint32_t), 0), "u32 atomics must be lock-free");
-static_assert(__atomic_always_lock_free(sizeof(uint64_t), 0), "u64 atomics must be lock-free");
-static_assert(__atomic_always_lock_free(sizeof(double), 0), "double atomics must be lock-free");
+static_assert(std::atomic_ref<uint32_t>::is_always_lock_free, "u32 atomics must be lock-free");
+static_assert(std::atomic_ref<uint64_t>::is_always_lock_free, "u64 atomics must be lock-free");
+static_assert(std::atomic_ref<double>::is_always_lock_free, "double atomics must be lock-free");
 
 // ---------------------------------------------------------------------------
 // Atomic field access
@@ -92,14 +94,19 @@ inline void CpuRelax() {
 }
 
 template <class T>
-inline T Ld(const T& r) {  // relaxed payload load
-  T v;
-  __atomic_load(&r, &v, __ATOMIC_RELAXED);
-  return v;
+inline std::atomic_ref<T> Atomic(T& r) {
+  static_assert(alignof(T) >= std::atomic_ref<T>::required_alignment, "misaligned field");
+  return std::atomic_ref<T>(r);
+}
+// Loads from const fields (the shim maps the segment read-only): an atomic load
+// never writes, and std::atomic_ref<const T> only arrives in C++26.
+template <class T>
+inline T Ld(const T& r, std::memory_order o = std::memory_order_relaxed) {
+  return Atomic(const_cast<T&>(r)).load(o);
 }
 template <class T>
-inline void St(T& r, T v) {  // relaxed payload store
-  __atomic_store(&r, &v, __ATOMIC_RELAXED);
+inline void St(T& r, T v, std::memory_order o = std::memory_order_relaxed) {
+  Atomic(r).store(v, o);
 }
 
 // ---------------------------------------------------------------------------
@@ -110,14 +117,14 @@ inline void St(T& r, T v) {  // relaxed payload store
 template <class CopyFn>
 inline bool SeqRead(const uint32_t& seq, CopyFn&& copy, int maxAttempts) {
   for (int i = 0; i < maxAttempts; ++i) {
-    const uint32_t s1 = __atomic_load_n(&seq, __ATOMIC_ACQUIRE);  // (1)
+    const uint32_t s1 = Ld(seq, std::memory_order_acquire);  // (1)
     if (s1 & 1u) {  // writer active: loop before reading the payload
       CpuRelax();
       continue;
     }
-    copy();                                                   // (2)
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);                  // (3)
-    const uint32_t s2 = __atomic_load_n(&seq, __ATOMIC_RELAXED);  // (4)
+    copy();                                               // (2)
+    std::atomic_thread_fence(std::memory_order_acquire);  // (3)
+    const uint32_t s2 = Ld(seq);                          // (4)
     if (s2 == s1) return true;
     CpuRelax();
   }
@@ -126,23 +133,23 @@ inline bool SeqRead(const uint32_t& seq, CopyFn&& copy, int maxAttempts) {
 
 // Single-writer begin: returns the even value to pass to SeqWriteEnd.
 inline uint32_t SeqWriteBeginSingle(uint32_t& seq) {
-  const uint32_t s = __atomic_load_n(&seq, __ATOMIC_RELAXED);  // only we write it: even
-  __atomic_store_n(&seq, s + 1, __ATOMIC_RELAXED);
-  __atomic_thread_fence(__ATOMIC_RELEASE);  // odd store before payload stores
+  const uint32_t s = Ld(seq);  // only we write it: even
+  St(seq, s + 1);
+  std::atomic_thread_fence(std::memory_order_release);  // odd store before payload stores
   return s;
 }
 
 // Multi-writer try-lock, one pass: fails immediately if another writer holds
 // the block. Used by the hot path, which must never spin.
 inline bool SeqTryLock(uint32_t& seq, uint32_t* out) {
-  uint32_t s = __atomic_load_n(&seq, __ATOMIC_RELAXED);
+  uint32_t s = Ld(seq);
   for (;;) {
     if (s & 1u) return false;
     // On failure `s` is reloaded; loop re-checks parity (spurious failures of
     // the weak CAS are retried, real contention shows up as odd).
-    if (__atomic_compare_exchange_n(&seq, &s, s + 1, /*weak=*/true, __ATOMIC_ACQUIRE,
-                                    __ATOMIC_RELAXED)) {
-      __atomic_thread_fence(__ATOMIC_RELEASE);
+    if (Atomic(seq).compare_exchange_weak(s, s + 1, std::memory_order_acquire,
+                                          std::memory_order_relaxed)) {
+      std::atomic_thread_fence(std::memory_order_release);
       *out = s;
       return true;
     }
@@ -150,12 +157,14 @@ inline bool SeqTryLock(uint32_t& seq, uint32_t* out) {
 }
 
 inline void SeqWriteEnd(uint32_t& seq, uint32_t s) {
-  __atomic_store_n(&seq, s + 2, __ATOMIC_RELEASE);  // payload stores happen-before this
+  St(seq, s + 2, std::memory_order_release);  // payload stores happen-before this
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 
+// The protocol's clock (HmdBlock::time is compared across processes), named
+// explicitly rather than relying on which clock std::chrono::steady_clock uses.
 inline double MonotonicSeconds() {
   timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
