@@ -261,8 +261,8 @@ install, validation and first rewrite to `~/.local/share/recline-vr/xrshim.log`.
 ## Streaming to a PC
 
 On the Frame, the PC-streaming client is an ordinary OpenVR app that reads poses
-from the compositor and sends them to the PC, so a Frame-side transform should reach
-streamed games with nothing installed on the PC. This is not yet verified.
+from the compositor and sends them to the PC, so the Frame-side transform reaches
+streamed games with nothing installed on the PC. Verified in use.
 
 ## Known limitations
 

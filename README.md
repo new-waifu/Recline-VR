@@ -153,4 +153,6 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
   both the 3D and the 2D mode (`camera.roomView` 1). The shim is mapped only into XRService (`grep -l librecline_xrshim
   /proc/*/maps`); camera-pose validation passes in about a second of head motion
   (cameras within 6.6 cm of the head, 0.7° spread).
-- **Not yet tested:** streaming to a PC, the safe-mode message, uninstall.
+- **Streaming to a PC:** recline works in streamed PC games with nothing installed
+  on the PC.
+- **Not yet tested:** the safe-mode message, uninstall.
