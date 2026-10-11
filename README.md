@@ -156,6 +156,13 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
   - test driver loading after us: it chains to us; `wrapped` within ~1 s,
     downstream check matches (0.02 mm).
   - after every restart the rotation was identity and old commands weren't replayed.
+- **Space Calibrator-style hook** (a test driver copying the Linux hooking of
+  Hyblocker's Space Calibrator: priority 9999, `GetGenericInterface` detour on the
+  shared context vtable, pose hook on the next `IVRServerDriverHost_006` request):
+  - with our old priority 100 it hooked first, from our own `Init`, and left the
+    vtable page `r-x`, so our hook was refused.
+  - with priority 100000 we hook first and its hook wraps ours (`wrapped`), with no
+    downstream conflict (0.10 mm / 0.05°).
 - **SteamVR restart from the headset** ends vrserver without driver cleanup (Valve's
   own driver is skipped too); only full shutdowns log the cleanup. `assert_*.dmp`
   files written at restart come from `vrdashboard` and the Steam client.
