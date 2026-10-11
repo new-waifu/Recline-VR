@@ -22,7 +22,7 @@ put() { # relative path
 if [ "$SRC" != "$DEST" ]; then
   (cd "$SRC" && find recline -type f) | while read -r f; do put "$f"; done
   for f in recline_overlay reclinectl recline_overlay.vrmanifest actions.json \
-           bindings_frame_controller.json bindings_knuckles.json install.sh uninstall.sh; do
+           bindings_frame_controller.json bindings_knuckles.json icon.png install.sh uninstall.sh; do
     put "$f"
   done
   # Bundled by builds that don't use the runtime's own copy (off the Frame).

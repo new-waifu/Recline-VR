@@ -41,7 +41,6 @@ const Color kPanel{40, 44, 54, 255};
 const Color kText{230, 232, 238, 255};
 const Color kDim{150, 156, 170, 255};
 const Color kAccent{70, 140, 255, 255};
-const Color kAccentDark{40, 70, 130, 255};
 const Color kGood{90, 200, 120, 255};
 const Color kWarn{255, 190, 70, 255};
 const Color kBad{255, 95, 95, 255};
@@ -193,7 +192,7 @@ class App {
     ov->SetOverlayInputMethod(main_, vr::VROverlayInputMethod_Mouse);
     vr::HmdVector2_t scale{{float(kW), float(kH)}};
     ov->SetOverlayMouseScale(main_, &scale);
-    RenderThumbnail();
+    SetThumbnail();
     {
       std::string err;
       vkOk_ = vk_.Init(kW, kH, &err);
@@ -543,16 +542,12 @@ class App {
     vr::VROverlay()->SetOverlayRaw(main_, uploaded_.data(), kW, kH, 4);
   }
 
-  void RenderThumbnail() {
-    Canvas t(128, 128);
-    t.Clear(kAccentDark);
-    // A tilted horizon line as an icon.
-    for (int x = 16; x < 112; ++x) {
-      const int y = 76 - (x - 16) * 24 / 96;
-      t.FillRect({x, y, 1, 6}, kText);
-    }
-    t.TextCentered({0, 84, 128, 40}, "RCL", kSmall, kText);
-    vr::VROverlay()->SetOverlayRaw(thumb_, t.MutableData(), 128, 128, 4);
+  // Dashboard icon, rendered from packaging/overlay/icon.svg.
+  void SetThumbnail() {
+    const std::string icon = dir_ + "/icon.png";
+    const vr::EVROverlayError e = vr::VROverlay()->SetOverlayFromFile(thumb_, icon.c_str());
+    if (e != vr::VROverlayError_None)
+      fprintf(stderr, "icon %s: %s\n", icon.c_str(), vr::VROverlay()->GetOverlayErrorNameFromEnum(e));
   }
 
   std::string dir_;

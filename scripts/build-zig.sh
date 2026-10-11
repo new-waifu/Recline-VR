@@ -17,7 +17,7 @@ CXXFLAGS="-std=c++20 -O2 -g -Wall -Wextra -Wno-unused-parameter -DRECLINE_FRAME 
 
 mkdir -p "$OUT/recline/bin/linuxarm64"
 cp -r "$ROOT/packaging/recline/." "$OUT/recline/"
-cp "$ROOT"/packaging/overlay/*.json "$ROOT"/scripts/install.sh "$ROOT"/scripts/uninstall.sh "$OUT/"
+cp "$ROOT"/packaging/overlay/*.json "$ROOT"/packaging/overlay/icon.png "$ROOT"/scripts/install.sh "$ROOT"/scripts/uninstall.sh "$OUT/"
 sed 's/@VR_BINARY_PATH_KEY@/binary_path_linux_arm/' "$ROOT/packaging/overlay/recline_overlay.vrmanifest.in" \
   > "$OUT/recline_overlay.vrmanifest"
 

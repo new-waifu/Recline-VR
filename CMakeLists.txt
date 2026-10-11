@@ -143,6 +143,7 @@ configure_file(packaging/overlay/recline_overlay.vrmanifest.in
                ${CMAKE_BINARY_DIR}/stage/recline_overlay.vrmanifest @ONLY)
 install(FILES ${CMAKE_BINARY_DIR}/stage/recline_overlay.vrmanifest packaging/overlay/actions.json
               packaging/overlay/bindings_frame_controller.json packaging/overlay/bindings_knuckles.json
+              packaging/overlay/icon.png
         DESTINATION .)
 install(PROGRAMS scripts/install.sh scripts/uninstall.sh DESTINATION .)
 
@@ -150,7 +151,7 @@ install(PROGRAMS scripts/install.sh scripts/uninstall.sh DESTINATION .)
 # itself is a runnable layout.
 file(COPY packaging/recline/ DESTINATION ${CMAKE_BINARY_DIR}/stage/recline)
 file(COPY packaging/overlay/ scripts/install.sh scripts/uninstall.sh DESTINATION ${CMAKE_BINARY_DIR}/stage
-     PATTERN "*.in" EXCLUDE)
+     PATTERN "*.in" EXCLUDE PATTERN "*.svg" EXCLUDE)
 
 # --- host unit tests (math + seqlock protocol; no SteamVR needed) ------------------
 if(RECLINE_BUILD_TESTS)

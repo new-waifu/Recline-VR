@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="256" height="256">
+  <!-- Recline VR dashboard icon: a reclining seat. White on transparent, like
+       SteamVR's own dashboard icons. icon.png is rendered from this file:
+         rsvg-convert -w 256 -h 256 -o icon.png icon.svg -->
+  <g fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M27.7 36.6 L54 86 L102 86"/>
+    <path d="M80 86 L80 106 M64 106 L96 106"/>
+    <path d="M61.5 14.4 A72 72 0 0 0 34.1 16.8"/>
+  </g>
+  <path d="M19.4 22.3 L30.7 6.4 L38.6 25.9 Z" fill="#fff" stroke="#fff" stroke-width="4" stroke-linejoin="round"/>
+</svg>
