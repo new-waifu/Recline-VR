@@ -115,7 +115,9 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
 - Passthrough (3D and 2D room view) relies on the XRService shim. If it can't load
   or its safety checks fail, passthrough is misaligned while reclined (see
   `~/.local/share/recline-vr/xrshim.log`).
-- The boundary is drawn un-rotated and looks tilted while reclined.
+- The boundary is drawn un-rotated and looks tilted while reclined. Intentional:
+  you don't move around while reclined, so it doesn't show up, and recentering
+  when you get up fixes it (see docs/DESIGN.md).
 - A recenter invalidates PC-side tracker calibration (e.g. Space Calibrator) while
   streaming.
 

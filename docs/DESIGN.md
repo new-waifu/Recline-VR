@@ -270,5 +270,10 @@ streamed games with nothing installed on the PC. Verified in use.
   2D room-view modes). If the shim isn't loaded or one of its checks fails,
   passthrough is misaligned while reclined.
 - **Boundaries** are drawn in the un-rotated frame and look tilted while reclined.
+  This is deliberately left alone. Someone reclined doesn't move around the
+  room, so they don't get near the boundary and it isn't shown. When they get up,
+  recentering (or resetting) brings the boundary back in line. Only a moving
+  bed or reclining chair would bring it into view while reclined, which is too
+  rare to justify another hook into SteamVR internals.
 - **SteamVR safe mode** disables add-on drivers after a crash; the overlay reports
   the driver as not loaded.
