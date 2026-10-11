@@ -30,6 +30,7 @@ void Usage() {
           "          head pose's forward axis instead)\n"
           "       reclinectl reset [--no-seated-reset]\n"
           "       reclinectl poses        (HMD/controller poses as apps see them)\n"
+          "       reclinectl bindings     (open the controller binding editor in the headset)\n"
           "       reclinectl setting get <section> <key>\n"
           "       reclinectl setting set <section> <key> <bool|int|float|string>\n"
           "       reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   (degrees, meters)\n");
@@ -340,6 +341,25 @@ int Setting(int argc, char** argv) {
   return rc;
 }
 
+int Bindings() {
+  vr::EVRInitError e = vr::VRInitError_None;
+  vr::VR_Init(&e, vr::VRApplication_Utility);
+  if (e != vr::VRInitError_None) {
+    fprintf(stderr, "error: VR_Init: %s\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
+    return 1;
+  }
+  const vr::EVRInputError ie = vr::VRInput()->OpenBindingUI(
+      "user.recline.overlay", vr::k_ulInvalidActionSetHandle, vr::k_ulInvalidInputValueHandle,
+      /*bShowOnDesktop=*/false);
+  vr::VR_Shutdown();
+  if (ie != vr::VRInputError_None) {
+    fprintf(stderr, "error: OpenBindingUI failed (%d)\n", int(ie));
+    return 1;
+  }
+  printf("binding editor opened in the headset\n");
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -353,6 +373,7 @@ int main(int argc, char** argv) {
   if (c == "reset") return Reset(argc - 2, argv + 2);
   if (c == "set") return Set(argc - 2, argv + 2);
   if (c == "poses") return Poses();
+  if (c == "bindings") return Bindings();
   if (c == "setting") return Setting(argc - 2, argv + 2);
   Usage();
   return 2;

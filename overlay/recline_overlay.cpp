@@ -28,7 +28,7 @@ using namespace recline;
 
 constexpr const char* kAppKey = "user.recline.overlay";
 constexpr const char* kOverlayKey = "user.recline.overlay.dashboard";
-constexpr int kW = 1024, kH = 700;
+constexpr int kW = 1024, kH = 760;
 
 const recline_font::FontFace& kSmall = recline_font::kFace22;
 const recline_font::FontFace& kBig = recline_font::kFace34;
@@ -353,6 +353,16 @@ class App {
     RefreshStatus();
   }
 
+  // SteamVR's own route to an overlay app's bindings is buried; open it directly.
+  void OpenBindings() {
+    const vr::EVRInputError e = vr::VRInput()->OpenBindingUI(
+        kAppKey, actionSet_, vr::k_ulInvalidInputValueHandle, /*bShowOnDesktop=*/false);
+    if (e != vr::VRInputError_None)
+      SetMessage("Could not open the binding UI (error " + std::to_string(int(e)) + ")", kBad);
+    else
+      SetMessage("Opened the controller binding editor", kText);
+  }
+
   float DisplayHz() {
     vr::ETrackedPropertyError e;
     const float hz = vr::VRSystem()->GetFloatTrackedDeviceProperty(
@@ -371,21 +381,30 @@ class App {
 
   enum Hit {
     kHitNone, kHitRecenter, kHitReset, kHitRotFull, kHitRotLevel, kHitPosHeight, kHitPosKeep,
-    kHitHeightMinus, kHitHeightPlus, kHitSeated, kHitRefLens, kHitRefHead
+    kHitHeightMinus, kHitHeightPlus, kHitSeated, kHitRefLens, kHitRefHead, kHitBindings,
+    kHitHeightSitting, kHitHeightStanding
   };
+
+  // Approximate average eye heights (m) for the "Target height" presets.
+  static constexpr double kSittingEyeHeight = 1.20;
+  static constexpr double kStandingEyeHeight = 1.50;
+  bool IsPreset(double h) const { return std::fabs(opt_.rc.eyeHeight - h) < 0.005; }
 
   void OnClick(int x, int y) {
     for (const auto& h : hits_) {
       if (!h.first.Contains(x, y)) continue;
       switch (h.second) {
         case kHitRecenter: DoRecenter(); return;
+        case kHitBindings: OpenBindings(); return;
         case kHitReset: DoReset(); return;
         case kHitRotFull: opt_.rc.levelOnly = false; break;
         case kHitRotLevel: opt_.rc.levelOnly = true; break;
         case kHitPosHeight: opt_.rc.keepPosition = false; break;
         case kHitPosKeep: opt_.rc.keepPosition = true; break;
-        case kHitHeightMinus: opt_.rc.eyeHeight = std::max(0.2, opt_.rc.eyeHeight - 0.05); break;
-        case kHitHeightPlus: opt_.rc.eyeHeight = std::min(2.5, opt_.rc.eyeHeight + 0.05); break;
+        case kHitHeightSitting: opt_.rc.eyeHeight = kSittingEyeHeight; opt_.rc.keepPosition = false; break;
+        case kHitHeightStanding: opt_.rc.eyeHeight = kStandingEyeHeight; opt_.rc.keepPosition = false; break;
+        case kHitHeightMinus: opt_.rc.eyeHeight = std::max(0.2, std::round((opt_.rc.eyeHeight - 0.05) * 100) / 100); break;
+        case kHitHeightPlus: opt_.rc.eyeHeight = std::min(2.5, std::round((opt_.rc.eyeHeight + 0.05) * 100) / 100); break;
         case kHitSeated: opt_.seatedReset = !opt_.seatedReset; break;
         case kHitRefLens: opt_.headAxis = false; break;
         case kHitRefHead: opt_.headAxis = true; break;
@@ -424,10 +443,17 @@ class App {
     c.Text(32, y + 12, "Position", kSmall, kDim);
     Button({200, y, 220, 46}, "Target height", kHitPosHeight, !opt_.rc.keepPosition);
     Button({430, y, 220, 46}, "Keep position", kHitPosKeep, opt_.rc.keepPosition);
+    y += 58;
     char buf[160];
+    const Color heightCol = opt_.rc.keepPosition ? kDim : kText;
+    c.Text(32, y + 12, "Eye height", kSmall, kDim);
+    snprintf(buf, sizeof buf, "Sitting %.2f", kSittingEyeHeight);
+    Button({200, y, 220, 46}, buf, kHitHeightSitting, IsPreset(kSittingEyeHeight));
+    snprintf(buf, sizeof buf, "Standing %.2f", kStandingEyeHeight);
+    Button({430, y, 220, 46}, buf, kHitHeightStanding, IsPreset(kStandingEyeHeight));
     snprintf(buf, sizeof buf, "%.2f m", opt_.rc.eyeHeight);
     Button({680, y, 50, 46}, "-", kHitHeightMinus, false);
-    c.TextCentered({730, y, 130, 46}, buf, kSmall, opt_.rc.keepPosition ? kDim : kText);
+    c.TextCentered({730, y, 130, 46}, buf, kSmall, heightCol);
     Button({860, y, 50, 46}, "+", kHitHeightPlus, false);
     y += 58;
     c.Text(32, y + 12, "Level ref", kSmall, kDim);
@@ -438,6 +464,7 @@ class App {
     y += 58;
     Button({32, y + 6, 34, 34}, opt_.seatedReset ? "x" : "", kHitSeated, opt_.seatedReset);
     c.Text(80, y + 12, "Also reset seated zero pose after recenter / reset", kSmall, kText);
+    Button({700, y, 292, 46}, "Edit controller bindings", kHitBindings, false);
 
     // Status panel
     y += 54;

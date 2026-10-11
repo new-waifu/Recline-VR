@@ -61,6 +61,7 @@ and restart SteamVR: the world is pitched 90° about the head once the first HMD
 - **Shm take-over:** if `/dev/shm/recline_v1` exists but never got its magic (creator
   crashed mid-init), the driver initializes it after ~1 s; clients still refuse.
 - **Driver ignores stale commands** written before it started (records the current `cmd_id` at init).
+- **Eye height presets:** Sitting 1.20 m (default) and Standing 1.50 m, plus ±5 cm steps.
 - **Overlay options persist** in `~/.config/recline-vr/overlay.conf` (UI prefs only, never R).
 - **Mouse Y:** overlay assumes OpenVR's bottom-left mouse origin; set
   `RECLINE_MOUSE_FLIP_Y=0` if clicks land mirrored (unverified on device).
