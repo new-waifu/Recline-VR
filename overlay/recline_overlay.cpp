@@ -28,7 +28,7 @@ using namespace recline;
 
 constexpr const char* kAppKey = "user.recline.overlay";
 constexpr const char* kOverlayKey = "user.recline.overlay.dashboard";
-constexpr int kW = 1024, kH = 760;
+constexpr int kW = 1024, kH = 700;
 
 const recline_font::FontFace& kSmall = recline_font::kFace22;
 const recline_font::FontFace& kBig = recline_font::kFace34;
@@ -123,7 +123,6 @@ int Unregister(const std::string& manifest) {
 struct Options {
   RecenterOptions rc;
   bool seatedReset = true;
-  bool headAxis = false;  // level the head axis instead of the lens-centre view axis
 };
 
 std::string ConfigPath() {
@@ -144,7 +143,6 @@ void LoadOptions(Options* o) {
     else if (k == "keepPosition") o->rc.keepPosition = v != 0;
     else if (k == "eyeHeight" && v >= 0.2 && v <= 2.5) o->rc.eyeHeight = v;
     else if (k == "seatedReset") o->seatedReset = v != 0;
-    else if (k == "headAxis") o->headAxis = v != 0;
   }
   fclose(f);
 }
@@ -156,8 +154,8 @@ void SaveOptions(const Options& o) {
   mkdir(dir.c_str(), 0700);
   FILE* f = fopen(path.c_str(), "w");
   if (!f) return;
-  fprintf(f, "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\nheadAxis=%d\n",
-          o.rc.levelOnly, o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset, o.headAxis);
+  fprintf(f, "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\n", o.rc.levelOnly,
+          o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset);
   fclose(f);
 }
 
@@ -321,7 +319,7 @@ class App {
     OpenShmIfNeeded();
     if (!shm_) return SetMessage("Shared memory unavailable: " + shmError_, kBad);
     RecenterOptions rc = opt_.rc;
-    rc.viewPitch = opt_.headAxis ? 0.0 : viewPitch_;
+    rc.viewPitch = viewPitch_;  // level what the user sees through the lenses
     Rigid traw;
     std::string err;
     if (!BuildTraw(vr::VRSystem(), rc, &traw, &err)) return SetMessage(err, kBad);
@@ -381,7 +379,7 @@ class App {
 
   enum Hit {
     kHitNone, kHitRecenter, kHitReset, kHitRotFull, kHitRotLevel, kHitPosHeight, kHitPosKeep,
-    kHitHeightMinus, kHitHeightPlus, kHitSeated, kHitRefLens, kHitRefHead, kHitBindings,
+    kHitHeightMinus, kHitHeightPlus, kHitSeated, kHitBindings,
     kHitHeightSitting, kHitHeightStanding
   };
 
@@ -406,8 +404,6 @@ class App {
         case kHitHeightMinus: opt_.rc.eyeHeight = std::max(0.2, std::round((opt_.rc.eyeHeight - 0.05) * 100) / 100); break;
         case kHitHeightPlus: opt_.rc.eyeHeight = std::min(2.5, std::round((opt_.rc.eyeHeight + 0.05) * 100) / 100); break;
         case kHitSeated: opt_.seatedReset = !opt_.seatedReset; break;
-        case kHitRefLens: opt_.headAxis = false; break;
-        case kHitRefHead: opt_.headAxis = true; break;
         default: return;
       }
       SaveOptions(opt_);
@@ -455,12 +451,6 @@ class App {
     Button({680, y, 50, 46}, "-", kHitHeightMinus, false);
     c.TextCentered({730, y, 130, 46}, buf, kSmall, heightCol);
     Button({860, y, 50, 46}, "+", kHitHeightPlus, false);
-    y += 58;
-    c.Text(32, y + 12, "Level ref", kSmall, kDim);
-    Button({200, y, 220, 46}, "Lens centre", kHitRefLens, !opt_.headAxis);
-    Button({430, y, 220, 46}, "Head axis", kHitRefHead, opt_.headAxis);
-    snprintf(buf, sizeof buf, "view axis %.1f deg", Deg(viewPitch_));
-    c.Text(680, y + 12, buf, kSmall, opt_.headAxis ? kDim : kText);
     y += 58;
     Button({32, y + 6, 34, 34}, opt_.seatedReset ? "x" : "", kHitSeated, opt_.seatedReset);
     c.Text(80, y + 12, "Also reset seated zero pose after recenter / reset", kSmall, kText);

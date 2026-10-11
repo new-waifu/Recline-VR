@@ -86,7 +86,9 @@ and restart SteamVR: the world is pitched 90° about the head once the first HMD
 - Overlay (Vulkan texture), clicks, hover highlight, controller long-presses and haptics
   work in headset.
 - Lens-centre recenter: the Frame's lens axis is ~14.4° below the head pose's forward
-  axis (asymmetric frustum); recenter levels the lens axis by default.
+  axis (asymmetric frustum); recenter always levels the lens axis (measured from SteamVR,
+  0 on headsets with a centred frustum). `reclinectl recenter --head-axis` (diagnostic,
+  undocumented in usage) levels the head axis instead.
 - Passthrough is broken while reclined (both 3D and 2D room view); under investigation separately.
 - §10.3 in headset: hellovr_vulkan (standing): Full / Level only / target height as
   expected. helloxr --space Local (seated/OpenXR): with the seated option on, recenter

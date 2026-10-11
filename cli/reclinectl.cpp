@@ -1,8 +1,9 @@
 // reclinectl: command-line client for driver_recline (SPEC §5.4).
 //
 //   reclinectl status
-//   reclinectl recenter [--keep-position] [--level-only] [--height M] [--head-axis]
-//                       [--no-seated-reset]
+//   reclinectl recenter [--keep-position] [--level-only] [--height M] [--no-seated-reset]
+//     (undocumented: --head-axis levels the head pose's forward axis instead of the
+//      lens-centre view axis; diagnostic only)
 //   reclinectl reset [--no-seated-reset]
 //   reclinectl set <yaw> <pitch> <roll> <x> <y> <z>     (degrees, meters)
 //   reclinectl poses      (prints device poses per tracking universe, for testing)
@@ -25,9 +26,7 @@ void Usage() {
   fprintf(stderr,
           "usage: reclinectl status\n"
           "       reclinectl recenter [--keep-position] [--level-only] [--height M]\n"
-          "                           [--head-axis] [--no-seated-reset]\n"
-          "         (default levels the lens-centre view axis; --head-axis levels the\n"
-          "          head pose's forward axis instead)\n"
+          "                           [--no-seated-reset]\n"
           "       reclinectl reset [--no-seated-reset]\n"
           "       reclinectl poses        (HMD/controller poses as apps see them)\n"
           "       reclinectl bindings     (open the controller binding editor in the headset)\n"
