@@ -95,4 +95,14 @@ and restart SteamVR: the world is pitched 90° about the head once the first HMD
 - §10.7 device reboot: driver registration in openvrpaths.vrpath survives, driver and
   overlay load at startup, R starts as identity; shutdown log shows "hook removed" then
   "[vrserver] Graceful exit".
-- Still open: streaming (§10.4), coexistence (§10.6), safe-mode message, uninstall.
+- §10.6 coexistence (driver_reclinetest, 10° yaw), both orders, each restart with a
+  recline left active in /recline_v1:
+  - test at loadPriority 200 (loads first): we chain to it; `conflict_downstream` raised
+    within ~7 s (err 9.99°), no `conflict_wrapped`.
+  - test at 50 (loads after us): it chains to us; `conflict_wrapped` raised within ~1 s,
+    downstream check matches (0.02 mm), no `conflict_downstream`.
+  - After every restart R was identity and the pre-restart command was not replayed.
+- Note: SteamVR's in-headset "Restart SteamVR" ends vrserver without driver Cleanup()
+  (driver_cv's is skipped too); only full shutdowns log "hook removed" + "Graceful exit".
+  The assert_*.dmp files written at restart come from vrdashboard and the Steam client.
+- Still open: streaming (§10.4), safe-mode message, uninstall.
