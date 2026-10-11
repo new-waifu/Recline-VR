@@ -132,10 +132,11 @@ add_subdirectory(cli)
 # into place. The non-binary files are copied at configure time, so editing or
 # adding one re-runs configure on the next build.
 file(GLOB_RECURSE STAGED_FILES CONFIGURE_DEPENDS packaging/* scripts/*.sh)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${STAGED_FILES})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${STAGED_FILES} LICENSE THIRD_PARTY.md)
 configure_file(packaging/overlay/recline_overlay.vrmanifest.in
                ${STAGE_DIR}/recline_overlay.vrmanifest @ONLY)
 file(COPY packaging/recline/ DESTINATION ${STAGE_DIR}/recline)
+file(COPY LICENSE THIRD_PARTY.md DESTINATION ${STAGE_DIR})
 file(COPY packaging/overlay/ DESTINATION ${STAGE_DIR}
      PATTERN "*.in" EXCLUDE PATTERN "*.svg" EXCLUDE)
 if(NOT WIN32)
