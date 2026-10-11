@@ -86,8 +86,7 @@ void Log(const char* fmt, ...) {
 // Read-only view of /recline_v1 (the driver creates and owns it; the shim only
 // ever reads the StateBlock). Mapped PROT_READ; ReadState does atomic loads.
 
-const ReclineShm* g_shm = nullptr;
-double g_nextShmTry = 0;
+double g_nextShmTry = 0;  // guarded by Shm()'s opener flag
 
 const ReclineShm* OpenShmReadOnly() {
   int fd = shm_open(kShmName, O_RDONLY, 0);
@@ -109,19 +108,34 @@ const ReclineShm* OpenShmReadOnly() {
   return shm;
 }
 
-// Current R from the StateBlock. Returns false (identity) if the segment is
-// absent (retry at most once a second) or R is not yet active/sane.
-bool CurrentR(Rigid* out) {
-  if (!g_shm) {
-    const double now = MonotonicSeconds();
-    if (now < g_nextShmTry) return false;
+// The mapped segment, opened lazily (retry at most once a second). Called from
+// both the mesh and the camera hook threads; one opener at a time.
+const ReclineShm* Shm() {
+  static std::atomic<const ReclineShm*> shm{nullptr};
+  static std::atomic<bool> opening{false};
+  if (const ReclineShm* s = shm.load(std::memory_order_acquire)) return s;
+  if (opening.exchange(true, std::memory_order_acquire)) return nullptr;
+  const double now = MonotonicSeconds();
+  const ReclineShm* s = nullptr;
+  if (now >= g_nextShmTry) {
     g_nextShmTry = now + 1.0;
-    g_shm = OpenShmReadOnly();
-    if (!g_shm) return false;
-    Log("opened /recline_v1 (read-only)");
+    s = OpenShmReadOnly();
+    if (s) {
+      shm.store(s, std::memory_order_release);
+      Log("opened /recline_v1 (read-only)");
+    }
   }
+  opening.store(false, std::memory_order_release);
+  return s;
+}
+
+// Current R from the StateBlock. Returns false (identity) if the segment is
+// absent or R is not yet active/sane.
+bool CurrentR(Rigid* out) {
+  const ReclineShm* shm = Shm();
+  if (!shm) return false;
   StateSnapshot s;
-  if (!ReadState(g_shm->state, &s)) return false;
+  if (!ReadState(shm->state, &s)) return false;
   if (!(s.flags & FLAG_TRANSFORM_ACTIVE)) return false;
   Rigid r{{s.R_q[0], s.R_q[1], s.R_q[2], s.R_q[3]}, {s.R_t[0], s.R_t[1], s.R_t[2]}};
   if (IsIdentity(r) || !IsSaneRigid(r)) return false;
@@ -288,15 +302,35 @@ void Install(void* obj) {
 // world-from-camera pose in it (row-major 3x4 at +0x30) is in the same pre-R
 // frame as rawFromMeshPose, so it gets the same R; otherwise the compositor
 // projects the camera image onto the (corrected) mesh from the wrong place.
+//
+// Both numbers are internal to this SteamVR build, so neither is trusted:
+//  - at install, vrclient's slot-5 code must copy exactly kCameraInfoSize bytes
+//    (its memcpy size immediate is read back from the instruction stream);
+//  - before the first rewrite, the matrix must behave like a head-mounted
+//    camera's pose: C = inv(H)·M, with H the pre-R head pose the driver
+//    publishes, must stay constant (cameras are rigidly mounted) and small in
+//    translation while the head turns by at least kValidateMinHeadTravelDeg.
+// Any mismatch disables the camera hook for the life of the process.
 
 constexpr const char* kCameraPassthroughVersion = "IVRCameraPassthroughInternal_001";
 constexpr size_t kSetFrameInfoSlot = 5;
 constexpr size_t kCameraInfoSize = 0xf8;
 constexpr size_t kWorldFromCameraOffset = 0x30;
 
+constexpr int kValidateSamples = 30;            // frames per validation window
+constexpr int kValidateMinGood = 20;            // consistent frames needed in a window
+constexpr double kValidateMaxSpreadDeg = 4.0;   // C drift allowed (head motion vs H latency)
+constexpr double kValidateMaxOffsetM = 0.25;    // camera within this of the head
+constexpr double kValidateMinHeadTravelDeg = 10.0;
+constexpr double kValidateMaxHeadAgeS = 0.05;   // H must be this fresh
+constexpr int kValidateMaxWindows = 20;         // give up if never conclusive
+
+enum CameraState { kValidating, kActive, kDisabled };
+
 using SetFrameInfoFn = uint32_t (*)(void*, uint32_t, uint32_t, uint32_t, const void*);
 std::atomic<SetFrameInfoFn> g_origSetFrameInfo{nullptr};
 std::atomic<bool> g_cameraInstalled{false};
+std::atomic<int> g_cameraState{kValidating};
 std::atomic<bool> g_loggedFirstCamera{false};
 
 bool IsRotation34(const float m[3][4]) {
@@ -311,21 +345,129 @@ bool IsRotation34(const float m[3][4]) {
   return true;
 }
 
+Rigid RigidFromMatrix34(const float m[3][4]) {
+  struct { float m[3][4]; } mm;
+  memcpy(mm.m, m, sizeof mm.m);
+  return FromMatrix34(mm);
+}
+
+void DisableCamera(const char* why) {
+  if (g_cameraState.exchange(kDisabled) != kDisabled)
+    Log("camera pose correction disabled: %s", why);
+}
+
+// Validation state: only touched under g_validateMu (frames may in principle
+// arrive on more than one thread; a busy lock just skips the sample).
+std::atomic_flag g_validateMu = ATOMIC_FLAG_INIT;
+// Each physical camera has its own mount, so C is tracked per (type, camera).
+struct {
+  int samples = 0, good = 0, windows = 0, invalid = 0;
+  bool haveC[4] = {};
+  Rigid refC[4], refH{{1, 0, 0, 0}, {0, 0, 0}};
+  double headTravelDeg = 0, maxSpreadDeg = 0, maxOffsetM = 0;
+} g_val;
+
+void ValidateSample(uint32_t type, uint32_t cam, const float m[3][4]) {
+  if (g_validateMu.test_and_set(std::memory_order_acquire)) return;
+  struct Unlock { ~Unlock() { g_validateMu.clear(std::memory_order_release); } } unlock;
+  if (g_cameraState.load() != kValidating || cam > 1) return;
+  const int key = (type ? 2 : 0) + int(cam);
+
+  if (!IsRotation34(m)) {
+    if (++g_val.invalid >= kValidateSamples) DisableCamera("frame info has no rotation at the expected offset");
+    return;
+  }
+  const ReclineShm* shm = Shm();
+  HmdSnapshot h;
+  if (!shm || !ReadHmd(shm->hmd, &h) || MonotonicSeconds() - h.time > kValidateMaxHeadAgeS)
+    return;  // no fresh head pose to compare against: wait
+  const Rigid H{Normalize(Quat{h.q[0], h.q[1], h.q[2], h.q[3]}), {h.t[0], h.t[1], h.t[2]}};
+  const Rigid C = Compose(Inverse(H), RigidFromMatrix34(m));
+
+  if (g_val.samples == 0) {
+    for (bool& b : g_val.haveC) b = false;
+    g_val.refH = H;
+    g_val.good = 0;
+    g_val.headTravelDeg = g_val.maxSpreadDeg = g_val.maxOffsetM = 0;
+  }
+  if (!g_val.haveC[key]) {
+    g_val.refC[key] = C;
+    g_val.haveC[key] = true;
+  }
+  ++g_val.samples;
+  const double spread = Deg(AngleBetween(C.q, g_val.refC[key].q));
+  if (spread <= kValidateMaxSpreadDeg && Length(C.t) <= kValidateMaxOffsetM) {
+    ++g_val.good;
+    if (spread > g_val.maxSpreadDeg) g_val.maxSpreadDeg = spread;
+    if (Length(C.t) > g_val.maxOffsetM) g_val.maxOffsetM = Length(C.t);
+    const double travel = Deg(AngleBetween(H.q, g_val.refH.q));
+    if (travel > g_val.headTravelDeg) g_val.headTravelDeg = travel;
+  }
+  if (g_val.samples < kValidateSamples) return;
+
+  // End of a window.
+  g_val.samples = 0;
+  ++g_val.windows;
+  if (g_val.good < kValidateMinGood) {
+    char why[160];
+    snprintf(why, sizeof why,
+             "camera pose not rigidly head-mounted (%d/%d consistent frames)", g_val.good,
+             kValidateSamples);
+    DisableCamera(why);
+  } else if (g_val.headTravelDeg >= kValidateMinHeadTravelDeg) {
+    g_cameraState.store(kActive);
+    Log("camera pose layout validated: cameras within %.1f cm of the head, spread %.1f deg "
+        "over %.0f deg of head motion",
+        g_val.maxOffsetM * 100, g_val.maxSpreadDeg, g_val.headTravelDeg);
+  } else if (g_val.windows >= kValidateMaxWindows) {
+    DisableCamera("head never moved enough to validate the camera pose");
+  }
+  // else: consistent but the head was too still to tell; try another window.
+}
+
 uint32_t HookSetFrameInfo(void* self, uint32_t type, uint32_t cam, uint32_t buf,
                           const void* info) {
   const SetFrameInfoFn orig = g_origSetFrameInfo.load(std::memory_order_acquire);
+  const int state = g_cameraState.load(std::memory_order_relaxed);
+  if (!info || state == kDisabled) return orig(self, type, cam, buf, info);
+
+  float m[3][4];
+  memcpy(m, static_cast<const unsigned char*>(info) + kWorldFromCameraOffset, sizeof m);
+  if (state == kValidating) {
+    ValidateSample(type, cam, m);
+    return orig(self, type, cam, buf, info);
+  }
+
   Rigid R;
-  if (!info || !CurrentR(&R)) return orig(self, type, cam, buf, info);
+  if (!CurrentR(&R) || !IsRotation34(m)) return orig(self, type, cam, buf, info);
   alignas(16) unsigned char copy[kCameraInfoSize];
   memcpy(copy, info, sizeof copy);
-  float m[3][4];
-  memcpy(m, copy + kWorldFromCameraOffset, sizeof m);
-  if (!IsRotation34(m)) return orig(self, type, cam, buf, info);  // unexpected layout
   ApplyRToMatrix34(R, m);
   memcpy(copy + kWorldFromCameraOffset, m, sizeof m);
   if (!g_loggedFirstCamera.exchange(true, std::memory_order_relaxed))
     Log("rewriting passthrough camera poses for the recline transform");
   return orig(self, type, cam, buf, copy);
+}
+
+// The size vrclient's slot-5 function copies: the immediate of the first
+// `mov x2, #imm` that is followed within a few instructions by a `bl` (the
+// memcpy). -1 if no such pair is found in the function's first instructions.
+long CopySizeOf(const void* fn) {
+#if defined(__aarch64__)
+  Mapping map;
+  if (!FindMapping(reinterpret_cast<uintptr_t>(fn), &map)) return -1;
+  const auto* code = static_cast<const uint32_t*>(fn);
+  const size_t avail = (map.end - reinterpret_cast<uintptr_t>(fn)) / 4;
+  const size_t n = avail < 96 ? avail : 96;
+  for (size_t i = 0; i < n; ++i) {
+    if ((code[i] & 0xffe0001fu) != 0xd2800002u) continue;  // movz x2, #imm16 (lsl 0)
+    for (size_t j = i + 1; j < n && j <= i + 6; ++j)
+      if ((code[j] & 0xfc000000u) == 0x94000000u) return long((code[i] >> 5) & 0xffff);  // bl
+  }
+#else
+  (void)fn;
+#endif
+  return -1;
 }
 
 void InstallCamera(void* obj) {
@@ -339,14 +481,20 @@ void InstallCamera(void* obj) {
     return;
   }
   if (cur == reinterpret_cast<void*>(&HookSetFrameInfo)) return;
+  const long size = CopySizeOf(cur);
+  if (size != long(kCameraInfoSize)) {
+    Log("not hooking camera frames: slot %zu copies %ld bytes, expected %zu", kSetFrameInfoSlot,
+        size, kCameraInfoSize);
+    return;
+  }
   g_origSetFrameInfo.store(reinterpret_cast<SetFrameInfoFn>(cur), std::memory_order_release);
   std::string err;
   if (!PatchSlot(slot, cur, reinterpret_cast<void*>(&HookSetFrameInfo), &err)) {
     Log("camera patch failed: %s", err.c_str());
     return;
   }
-  Log("hooked %s slot %zu (orig=%p)%s%s", kCameraPassthroughVersion, kSetFrameInfoSlot, cur,
-      err.empty() ? "" : "; ", err.c_str());
+  Log("hooked %s slot %zu (orig=%p); validating before first rewrite%s%s",
+      kCameraPassthroughVersion, kSetFrameInfoSlot, cur, err.empty() ? "" : "; ", err.c_str());
 }
 
 // ---------------------------------------------------------------------------
