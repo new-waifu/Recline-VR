@@ -62,6 +62,10 @@ while a game is running (but not while the dashboard is open).
 Defaults are deliberately finger-twisting combinations that normal gameplay won't
 produce.
 
+**Safety:** the recline is undone automatically when you sit up, get up, move
+away or take the headset off, because SteamVR's boundary is only right without
+it. A short "Back to normal" in view tells you it happened.
+
 **Command line** (`~/.local/share/recline-vr/reclinectl`):
 
     reclinectl status                      # driver loaded? hook? current rotation, conflicts
@@ -135,9 +139,10 @@ disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driv
 - Passthrough (3D and 2D room view) relies on the XRService shim. If it can't load
   or its safety checks fail, passthrough is misaligned while reclined (see
   `~/.local/share/recline-vr/xrshim.log`).
-- The boundary is drawn un-rotated and looks tilted while reclined. Intentional:
-  you don't move around while reclined, so it doesn't show up, and recentering
-  when you get up fixes it (see docs/DESIGN.md).
+- The boundary is drawn un-rotated and looks tilted while reclined, so Recline
+  resets itself as soon as you get up, move away or take the headset off (see
+  docs/DESIGN.md). While you lie still, your hands may not trigger the boundary
+  where you'd expect.
 - A recenter invalidates PC-side tracker calibration (e.g. Space Calibrator) while
   streaming.
 

@@ -22,6 +22,7 @@ bool ReadState(const StateBlock& b, StateSnapshot* o, int attempts) {
     o->cmd_result = Ld(b.cmd_result);
     o->flags = Ld(b.flags);
     o->hmd_index = Ld(b.hmd_index);
+    o->auto_reset = Ld(b.auto_reset);
     for (int i = 0; i < 4; ++i) o->R_q[i] = Ld(b.R_q[i]);
     for (int i = 0; i < 3; ++i) o->R_t[i] = Ld(b.R_t[i]);
   }, attempts);
@@ -41,6 +42,7 @@ void WriteState(StateBlock& b, const StateSnapshot& v) {
   St(b.cmd_result, v.cmd_result);
   St(b.flags, v.flags);
   St(b.hmd_index, v.hmd_index);
+  St(b.auto_reset, v.auto_reset);
   for (int i = 0; i < 4; ++i) St(b.R_q[i], v.R_q[i]);
   for (int i = 0; i < 3; ++i) St(b.R_t[i], v.R_t[i]);
   SeqWriteEnd(b.seq, s);

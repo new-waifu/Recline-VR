@@ -32,6 +32,8 @@ enum StateFlags : uint32_t {
   FLAG_WRAPPED = 1u << 3,
   FLAG_HOOK_REFUSED = 1u << 4,
 };
+// Why the driver undid the recline on its own (StateBlock::auto_reset).
+enum AutoResetReason : uint32_t { AUTO_RESET_NONE = 0, AUTO_RESET_MOVED = 1, AUTO_RESET_REMOVED = 2 };
 
 struct alignas(64) CmdBlock {  // writers: overlay, reclinectl (multi-writer: lock via seq CAS)
   uint32_t seq;
@@ -48,7 +50,7 @@ struct alignas(64) StateBlock {  // single writer: driver command thread
   uint32_t cmd_result;  // CmdResult
   uint32_t flags;       // StateFlags
   uint32_t hmd_index;
-  uint32_t _pad;
+  uint32_t auto_reset;  // (count << 8) | AutoResetReason of the latest automatic reset
   double R_q[4], R_t[3];  // current transform
 };
 
@@ -176,7 +178,7 @@ struct CmdSnapshot {
   double q[4] = {1, 0, 0, 0}, t[3] = {0, 0, 0};
 };
 struct StateSnapshot {
-  uint32_t cmd_ack = 0, cmd_result = 0, flags = 0, hmd_index = 0;
+  uint32_t cmd_ack = 0, cmd_result = 0, flags = 0, hmd_index = 0, auto_reset = 0;
   double R_q[4] = {1, 0, 0, 0}, R_t[3] = {0, 0, 0};
 };
 struct HmdSnapshot {

@@ -17,6 +17,7 @@
 #include <thread>
 #include <vector>
 
+#include "auto_reset.h"
 #include "canvas.h"
 #include "overlay_options.h"
 #include "platform.h"
@@ -266,6 +267,13 @@ class App {
         vr::VRSystem()->AcknowledgeQuit_Exiting();
         quit_ = true;
       }
+      if (ev.trackedDeviceIndex == status_.state.hmd_index) {
+        if (ev.eventType == vr::VREvent_TrackedDeviceUserInteractionEnded) {
+          if (removedSince_ < 0) removedSince_ = MonotonicSeconds();
+        } else if (ev.eventType == vr::VREvent_TrackedDeviceUserInteractionStarted) {
+          removedSince_ = -1;
+        }
+      }
       // SteamVR's own recenter (system button or menu) flags its standing
       // reset. So does any app's standing reset, ours included (see
       // ResetZeroPoses); Recline's own seated-only resets send no standing event.
@@ -367,7 +375,8 @@ class App {
     if (!shm_) return Fail("Shared memory unavailable: " + shmError_);
     const SendResult r = SendCommand(shm_, CMD_RESET, nullptr);
     if (r != SendResult::Ok) return Fail(std::string("Reset failed: ") + SendResultText(r));
-    const bool seated = ResetZeroPoses(system);
+    const bool seated = ResetZeroPoses(system || standingZeroedReclined_);
+    standingZeroedReclined_ = false;
     Haptic();
     SetMessage(seated ? "Back to normal (seated zero reset too)" : "Back to normal", kGood);
     RefreshStatus();
@@ -398,6 +407,9 @@ class App {
   // forward, as after SteamVR's own recenter.
   void OnSystemRecenter() {
     if (MonotonicSeconds() < ignoreSystemRecenterUntil_ || !status_.driverAlive) return;
+    // Not on anyone's head (e.g. lying on a table): it would read as tilted
+    // over and recline. The proximity sensor flickers briefly while worn.
+    if (!HeadsetWorn()) return;
     HmdSnapshot h;
     StateSnapshot st;
     if (!shm_ || !ReadHmd(shm_->hmd, &h) || !ReadState(shm_->state, &st)) return;
@@ -407,6 +419,7 @@ class App {
     if (tilt > opt_.systemRecenterTilt) {
       snprintf(buf, sizeof buf, "SteamVR recenter: reclined (view tilted %.0f deg)", tilt);
       if (DoRecenter(/*system=*/true)) {
+        standingZeroedReclined_ = true;
         SetMessage(buf, kGood);
         ShowToast("Reclined");
       }
@@ -433,7 +446,6 @@ class App {
         toast_ = vr::k_ulOverlayHandleInvalid;
         return;
       }
-      ov->SetOverlayWidthInMeters(toast_, 0.22f);
       // Above other overlays and nearer than the dashboard, so an open
       // dashboard does not hide it.
       ov->SetOverlaySortOrder(toast_, 200);
@@ -445,12 +457,15 @@ class App {
       ToMatrix34(pose, &m);
       ov->SetOverlayTransformTrackedDeviceRelative(toast_, vr::k_unTrackedDeviceIndex_Hmd, &m);
     }
-    Canvas c(kToastW, kToastH);
+    // As wide as the text needs, at a fixed scale (kToastW pixels per 0.22 m).
+    const int w = std::max(kToastW, Canvas::TextWidth(text, kBig) + 48);
+    Canvas c(w, kToastH);
     c.Clear({24, 26, 32, 200});
-    c.StrokeRect({0, 0, kToastW, kToastH}, kAccent, 2);
-    c.TextCentered({0, 0, kToastW, kToastH}, text, kBig, kText);
+    c.StrokeRect({0, 0, w, kToastH}, kAccent, 2);
+    c.TextCentered({0, 0, w, kToastH}, text, kBig, kText);
+    ov->SetOverlayWidthInMeters(toast_, 0.22f * float(w) / kToastW);
     // Drawn once while hidden, so SetOverlayRaw's flicker on replace is moot.
-    ov->SetOverlayRaw(toast_, const_cast<uint8_t*>(c.Data()), kToastW, kToastH, 4);
+    ov->SetOverlayRaw(toast_, const_cast<uint8_t*>(c.Data()), w, kToastH, 4);
     ov->SetOverlayAlpha(toast_, 1.0f);
     ov->ShowOverlay(toast_);
     toastShownAt_ = MonotonicSeconds();
@@ -502,8 +517,39 @@ class App {
     return (e == vr::TrackedProp_Success && hz > 20.0f) ? hz : 90.0f;
   }
 
+  bool HeadsetWorn() const {
+    return removedSince_ < 0 || MonotonicSeconds() - removedSince_ < AutoResetGuard::kRemovedHold;
+  }
+
+  // The driver undid the recline because the user moved away or took the
+  // headset off (AutoResetGuard). Say so, and put the zero poses back in front
+  // of the user once the headset is on again.
+  void HandleAutoReset() {
+    const uint32_t a = status_.state.auto_reset;
+    if (!status_.shmOk) return;
+    if (!autoResetSeen_) {
+      autoResetSeen_ = true;
+      lastAutoReset_ = a;
+    }
+    if (a >> 8 != lastAutoReset_ >> 8) {
+      lastAutoReset_ = a;
+      pendingAutoReset_ = a & 0xffu;
+      SetMessage(pendingAutoReset_ == AUTO_RESET_MOVED ? "Back to normal: you moved away"
+                                                       : "Back to normal: the headset was taken off",
+                 kWarn);
+    }
+    if (pendingAutoReset_ == AUTO_RESET_NONE || !HeadsetWorn()) return;
+    ResetZeroPoses(standingZeroedReclined_);
+    standingZeroedReclined_ = false;
+    Haptic();
+    ShowToast(pendingAutoReset_ == AUTO_RESET_MOVED ? "Back to normal: you moved"
+                                                    : "Back to normal: headset was off");
+    pendingAutoReset_ = AUTO_RESET_NONE;
+  }
+
   void RefreshStatus() {
     status_ = QueryStatus(shm_, &lastPoseCount_);
+    HandleAutoReset();
     vr::EVRSettingsError se = vr::VRSettingsError_None;
     safeModeBlocked_ = vr::VRSettings()->GetBool("driver_recline", "blocked_by_safe_mode", &se) &&
                        se == vr::VRSettingsError_None;
@@ -718,6 +764,13 @@ class App {
   bool inputOk_ = false;
   bool hideWarned_ = false;  // unbound warning shown; the next click hides
   double ignoreSystemRecenterUntil_ = 0;
+  double removedSince_ = -1;  // headset reported not worn since then; < 0 while worn
+  // SteamVR's standing zero was last taken while reclined (answering its own
+  // recenter), so it must be retaken once the recline is undone.
+  bool standingZeroedReclined_ = false;
+  bool autoResetSeen_ = false;
+  uint32_t lastAutoReset_ = 0;
+  uint32_t pendingAutoReset_ = AUTO_RESET_NONE;  // reason not yet shown
   vr::VROverlayHandle_t toast_ = vr::k_ulOverlayHandleInvalid;
   double toastShownAt_ = 0;  // 0: hidden
   static constexpr double kToastHold = 1.2, kToastFade = 0.4;  // s

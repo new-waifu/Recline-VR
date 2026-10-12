@@ -21,6 +21,7 @@
 #include <string>
 #include <thread>
 
+#include "auto_reset.h"
 #include "platform.h"
 #include "pose_hook.h"
 #include "pose_math.h"
@@ -288,8 +289,9 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       CmdSnapshot c;
       if (ReadCmd(shm->cmd, &c)) lastCmdId_ = c.cmd_id;
       StateSnapshot ss;
-      ReadState(shm->state, &ss);  // keep cmd_ack monotonic for clients
+      ReadState(shm->state, &ss);  // keep cmd_ack and auto_reset monotonic for clients
       state_.cmd_ack = ss.cmd_ack;
+      state_.auto_reset = ss.auto_reset & ~0xffu;
       // A fresh driver start resets the HMD liveness block's seq if a previous
       // vrserver died holding it (hook writers are in-process only).
       uint32_t hs = Ld(shm->hmd.seq);
@@ -349,13 +351,21 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
   void RunFrame() override {
     vr::VREvent_t ev;
     bool resolve = false;
+    const double now = MonotonicSeconds();
     while (host_ && host_->PollNextEvent(&ev, sizeof ev)) {
       if (ev.eventType == vr::VREvent_TrackedDeviceActivated ||
           ev.eventType == vr::VREvent_TrackedDeviceDeactivated ||
           ev.eventType == vr::VREvent_TrackedDeviceUpdated)
         resolve = true;
+      // The headset's proximity sensor, for the automatic reset.
+      if (ev.trackedDeviceIndex == g_hmdIndex.load(std::memory_order_relaxed)) {
+        if (ev.eventType == vr::VREvent_TrackedDeviceUserInteractionEnded) {
+          if (removedSince_.load() < 0) removedSince_.store(now);
+        } else if (ev.eventType == vr::VREvent_TrackedDeviceUserInteractionStarted) {
+          removedSince_.store(-1);
+        }
+      }
     }
-    const double now = MonotonicSeconds();
     if (resolve || (!hmdVerified_ && now >= nextResolve_)) {
       nextResolve_ = now + 2.0;
       ResolveHmdIndex();
@@ -363,8 +373,8 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
   }
 
   bool ShouldBlockStandbyMode() override { return false; }
-  void EnterStandby() override {}
-  void LeaveStandby() override {}
+  void EnterStandby() override { standby_.store(true); }
+  void LeaveStandby() override { standby_.store(false); }
 
  private:
   void ResolveHmdIndex() {
@@ -440,6 +450,16 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
 
       if (!debugApplied) debugApplied = TryApplyDebugPitch(&stateDirty);
 
+      if (guard_.Armed()) {
+        Rigid H;
+        const bool have = LatestHead(&H);
+        const uint32_t why = guard_.Update(now, have, H.t, removedSince_.load(), standby_.load());
+        if (why != AUTO_RESET_NONE) {
+          AutoReset(why);
+          stateDirty = true;
+        }
+      }
+
       if (now >= nextSlow) {
         nextSlow = now + 1.0;
         uint32_t flags = state_.flags;
@@ -505,8 +525,21 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     state_.R_t[0] = r.t.x; state_.R_t[1] = r.t.y; state_.R_t[2] = r.t.z;
     if (IsIdentity(r)) state_.flags &= ~FLAG_TRANSFORM_ACTIVE;
     else state_.flags |= FLAG_TRANSFORM_ACTIVE;
+    // Watch the real head from where it is now; without a head pose there is
+    // nothing to measure movement against.
+    Rigid H;
+    if (!IsIdentity(r) && LatestHead(&H)) guard_.Arm(H.t);
+    else guard_.Disarm();
     // A new R changes what "expected" means for the downstream check.
     g_mismatchStreak.store(0, std::memory_order_relaxed);
+  }
+
+  // The user moved away or took the headset off while reclined: undo R so
+  // SteamVR's boundary and passthrough are right again.
+  void AutoReset(uint32_t why) {
+    SetR(Rigid{});
+    state_.auto_reset = (((state_.auto_reset >> 8) + 1) << 8) | why;
+    Log("automatic reset: %s", why == AUTO_RESET_MOVED ? "the head moved away" : "headset taken off");
   }
 
   void LogR(const char* what, const Rigid& r) {
@@ -593,6 +626,9 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
 #endif
   bool hmdVerified_ = false;
   double nextResolve_ = 0;
+  AutoResetGuard guard_;                  // command thread only
+  std::atomic<double> removedSince_{-1};  // RunFrame -> command thread
+  std::atomic<bool> standby_{false};
   std::atomic<bool> running_{false};
   std::thread thread_;
 };

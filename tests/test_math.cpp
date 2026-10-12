@@ -5,6 +5,7 @@
 #include <random>
 
 #include "../driver/pose_math.h"
+#include "auto_reset.h"
 #include "recenter_math.h"
 
 using namespace recline;
@@ -195,6 +196,47 @@ static void TestViewTilt() {
   }
 }
 
+static void TestAutoReset() {
+  const Vec3 a{-2.3, -0.4, 1.4};
+  // Holds offset `d` for `secs`; `removedAt` (relative to the start, < 0: worn)
+  // is when the headset was reported not worn.
+  const auto run = [&](Vec3 d, double secs, double removedAt = -1, bool standby = false) {
+    AutoResetGuard g;
+    g.Arm(a);
+    uint32_t why = AUTO_RESET_NONE;
+    for (double t = 0; t <= secs && why == AUTO_RESET_NONE; t += 0.01)
+      why = g.Update(100 + t, true, a + d, removedAt < 0 ? -1 : 100 + removedAt, standby);
+    return why;
+  };
+  // Measured normal movement while reclined stays put.
+  CHECK(run({0.23, 0, 0}, 5) == AUTO_RESET_NONE, "reach");
+  CHECK(run({0.14, 0.26, 0.10}, 5) == AUTO_RESET_NONE, "roll over");
+  CHECK(run({0, -0.5, 0}, 5) == AUTO_RESET_NONE, "lower");
+  // Sitting up, getting out of a chair, standing.
+  CHECK(run({0.3, 0, 0.3}, 1) == AUTO_RESET_MOVED, "horizontal");
+  CHECK(run({0, 0.36, 0}, 1) == AUTO_RESET_MOVED, "rise");
+  // Only once held: a brief excursion does nothing.
+  CHECK(run({0.5, 0, 0}, 0.2) == AUTO_RESET_NONE, "hold");
+  {
+    AutoResetGuard g;
+    g.Arm(a);
+    CHECK(g.Update(0, true, a + Vec3{0.5, 0, 0}, -1, false) == AUTO_RESET_NONE, "spike");
+    CHECK(g.Update(0.2, true, a, -1, false) == AUTO_RESET_NONE, "back");
+    CHECK(g.Update(0.3, true, a + Vec3{0.5, 0, 0}, -1, false) == AUTO_RESET_NONE, "hold restarts");
+  }
+  // Headset off: the proximity flicker (~0.5-1 s) is ignored, a removal is not.
+  CHECK(run({}, 1.0, 0) == AUTO_RESET_NONE, "flicker");
+  CHECK(run({}, 3.5, 0) == AUTO_RESET_REMOVED, "removed");
+  CHECK(run({}, 0.01, -1, true) == AUTO_RESET_REMOVED, "standby");
+  {
+    AutoResetGuard g;
+    g.Arm(a);
+    CHECK(g.Update(1, false, {}, -1, false) == AUTO_RESET_NONE, "no head pose");
+    g.Disarm();
+    CHECK(g.Update(2, true, a + Vec3{9, 9, 9}, 0, true) == AUTO_RESET_NONE, "disarmed");
+  }
+}
+
 static void TestDebugPitch() {
   // Debug pitch about the head position keeps the head position fixed.
   const Vec3 h{0.3, 1.1, -0.4};
@@ -218,6 +260,7 @@ int main() {
   TestRecenterPipeline();
   TestViewPitch();
   TestViewTilt();
+  TestAutoReset();
   TestDebugPitch();
   TestSanity();
   if (g_fail) {

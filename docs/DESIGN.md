@@ -176,8 +176,8 @@ talk over a 4 KiB POSIX shared-memory segment. It has three blocks, each on its 
 
 - `CmdBlock`: commands (`RECENTER` with `Traw`, `RESET`, `SET` with an explicit R).
   Several clients may write.
-- `StateBlock`: acknowledgement, result, flags and current R. Only the driver's
-  command thread writes it.
+- `StateBlock`: acknowledgement, result, flags, current R, and a counter and reason
+  for the latest automatic reset. Only the driver's command thread writes it.
 - `HmdBlock`: latest driver-world head pose H, its timestamp, and a pose counter for
   liveness. Written from hook threads.
 
@@ -218,6 +218,35 @@ atomics don't work across processes.
   hook exists only in that process's memory.
 - `debugPitchDeg` (driver setting) applies a fixed pitch about the head at startup,
   for testing without any client.
+
+## Automatic reset
+
+SteamVR's boundary can't follow the recline (see Known limitations), so R must
+never stay active once the user can walk around. The driver undoes it on its own,
+in the command thread, so this doesn't depend on the overlay running:
+
+- **Moved away.** Whenever R becomes non-identity, the driver records the real
+  head position (driver-world H, before R) as the anchor. It resets when the head
+  is more than 0.4 m away horizontally, or more than 0.35 m higher, for 0.25 s.
+  Measured on the Frame, lying on a couch or reclining in a chair while shifting,
+  reaching and rolling over stayed within 0.23 m horizontally and 0.26 m up.
+  Sitting up and getting out of a chair passed 0.4 m horizontally about a second
+  in, before the first step. Getting out of a chair hardly raises the head, so
+  horizontal travel is the main signal; an absolute head height would also fail
+  for recliners, where a reclined head is about as high as a seated one.
+  Tilt is deliberately not used: a shallow recline made on purpose is upright
+  enough to look like sitting.
+- **Headset taken off.** The headset's proximity sensor
+  (`VREvent_TrackedDeviceUserInteractionEnded` / `Started` for the HMD) reports
+  "not worn" for about half a second at random while worn, so the driver resets
+  only after 3 s without "worn", or when SteamVR enters standby. Otherwise a
+  headset taken off while reclined would still be reclined when put on again,
+  possibly standing.
+
+The overlay sees the reset counter change. It says why ("Back to normal: you
+moved" / "headset was off") with a toast and a haptic pulse, once the headset is
+worn again, and re-zeroes the seated pose (and the standing pose, if it was last
+zeroed while reclined) in front of the user.
 
 ## Dashboard panel
 
@@ -398,10 +427,14 @@ mapping (`Local\recline_v1`), which disappears with its last user.
   2D room-view modes). If the shim isn't loaded or one of its checks fails,
   passthrough is misaligned while reclined.
 - **Boundaries** are drawn in the un-rotated frame and look tilted while reclined.
-  This is deliberately left alone. Someone reclined doesn't move around the
-  room, so they don't get near the boundary and it isn't shown. When they get up,
-  recentering (or resetting) brings the boundary back in line. Only a moving
-  bed or reclining chair would bring it into view while reclined, which is too
-  rare to justify another hook into SteamVR internals.
+  Correcting them was ruled out. The compositor draws the walls as vertical
+  extrusions of the floor outline in standing space, with no transform to tilt
+  them. Committing rotated walls creates a new universe detached from the SLAM
+  map. Replacing the chaperone would leave the user without one if Recline
+  failed. Instead R is reset as soon as the user moves away or takes the headset
+  off (see Automatic reset), so the boundary is right whenever they can walk.
+  While lying still, hands are drawn displaced from their real positions, so the
+  boundary may show when a virtual hand crosses it, or miss a real hand
+  reaching a real wall beside the bed.
 - **SteamVR safe mode** disables add-on drivers after a crash; the overlay reports
   the driver as not loaded.
