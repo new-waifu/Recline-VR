@@ -46,4 +46,13 @@ inline double ViewPitchFromProjection(double m11, double m12, double lensV) {
   return std::atan((yNdc + m12) / m11);
 }
 
+// Tilt (radians) of the lens-centre view frame from upright: the angle between
+// its up axis and world up. Pitch and roll both count, so lying on the back,
+// side or front all read about 90°. `head` must be in a gravity-aligned space
+// (+Y up), e.g. the driver-world head pose H.
+inline double ViewTilt(Quat head, double viewPitch) {
+  const Vec3 up = Rotate(head * AxisAngle({1, 0, 0}, viewPitch), {0, 1, 0});
+  return std::acos(std::fmax(-1.0, std::fmin(1.0, up.y)));
+}
+
 }  // namespace recline

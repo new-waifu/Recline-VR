@@ -16,7 +16,14 @@ struct OverlayOptions {
   // without a dashboard entry (the input actions still work) and the panel is
   // only created while summoned.
   bool showInDashboard = true;
+  // React to SteamVR's own recenter: recline when the view is tilted more than
+  // systemRecenterTilt (degrees, pitch and roll combined) from upright,
+  // otherwise undo any recline and keep SteamVR's behaviour. Off by default.
+  bool systemRecenter = false;
+  double systemRecenterTilt = 35;
 };
+
+constexpr double kMinSystemRecenterTilt = 20, kMaxSystemRecenterTilt = 75;
 
 // std::filesystem path from a UTF-8 string (the platform layer's encoding).
 std::filesystem::path Utf8Path(const std::string& s);

@@ -173,6 +173,28 @@ static void TestViewPitch() {
   }
 }
 
+static void TestViewTilt() {
+  const double vp = Rad(-14);
+  const auto tilt = [&](Quat q) { return Deg(ViewTilt(q, vp)); };
+  // Upright, looking level through the lens: head axis 14° up.
+  CHECK(std::fabs(tilt(AxisAngle({1, 0, 0}, Rad(14)))) < 1e-9, "level view");
+  CHECK(std::fabs(tilt(AxisAngle({1, 0, 0}, Rad(49))) - 35) < 1e-9, "looking up 35°");
+  CHECK(std::fabs(tilt(AxisAngle({1, 0, 0}, Rad(-21))) - 35) < 1e-9, "looking down 35°");
+  // Lying on the back, side or front: about 90° whichever way the view points.
+  CHECK(std::fabs(tilt(AxisAngle({1, 0, 0}, Rad(104))) - 90) < 1e-9, "on the back");
+  CHECK(std::fabs(tilt(AxisAngle({0, 0, 1}, Rad(90)) * AxisAngle({1, 0, 0}, Rad(14))) - 90) < 1e-9,
+        "on the side");
+  CHECK(std::fabs(tilt(AxisAngle({1, 0, 0}, Rad(-76))) - 90) < 1e-9, "face down");
+  // Pitch and roll combine; yaw does not count.
+  for (int i = 0; i < 1000; ++i) {
+    const Quat view = RandQ();
+    const Quat head = view * AxisAngle({1, 0, 0}, -vp);
+    const double expect = Deg(std::acos(Rotate(view, {0, 1, 0}).y));
+    CHECK(std::fabs(tilt(head) - expect) < 1e-6, "tilt %.3f vs %.3f", tilt(head), expect);
+    CHECK(std::fabs(tilt(AxisAngle({0, 1, 0}, U(-3, 3)) * head) - tilt(head)) < 1e-6, "yaw invariant");
+  }
+}
+
 static void TestDebugPitch() {
   // Debug pitch about the head position keeps the head position fixed.
   const Vec3 h{0.3, 1.1, -0.4};
@@ -195,6 +217,7 @@ int main() {
   TestLevelOnly();
   TestRecenterPipeline();
   TestViewPitch();
+  TestViewTilt();
   TestDebugPitch();
   TestSanity();
   if (g_fail) {

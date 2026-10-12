@@ -29,7 +29,9 @@ using namespace recline;
 
 constexpr const char* kAppKey = "user.recline.overlay";
 constexpr const char* kOverlayKey = "user.recline.overlay.dashboard";
-constexpr int kW = 1024, kH = 700;
+constexpr const char* kToastKey = "user.recline.overlay.toast";
+constexpr int kW = 1024, kH = 760;
+constexpr int kToastW = 320, kToastH = 64;
 
 const recline_font::FontFace& kSmall = recline_font::kFace22;
 const recline_font::FontFace& kBig = recline_font::kFace34;
@@ -152,6 +154,7 @@ class App {
         dirty_ = true;
       }
       UpdatePanel(now);
+      UpdateToast(now);
       if ((dirty_ || uploadPending_) && ov->IsOverlayVisible(main_)) Render();
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
@@ -263,6 +266,12 @@ class App {
         vr::VRSystem()->AcknowledgeQuit_Exiting();
         quit_ = true;
       }
+      // SteamVR's own recenter (system button or menu) flags its standing
+      // reset. So does any app's standing reset, ours included (see
+      // ResetZeroPoses); Recline's own seated-only resets send no standing event.
+      if (ev.eventType == vr::VREvent_StandingZeroPoseReset &&
+          ev.data.seatedZeroPoseReset.bResetBySystemMenu && opt_.systemRecenter)
+        OnSystemRecenter();
     }
     while (vr::VROverlay()->PollNextOverlayEvent(main_, &ev, sizeof ev)) {
       switch (ev.eventType) {
@@ -328,40 +337,134 @@ class App {
     fprintf(stderr, "%s\n", m.c_str());
   }
 
-  void DoRecenter() {
+  // An error for the status line; returns false for the caller to pass on.
+  bool Fail(const std::string& m) {
+    SetMessage(m, kBad);
+    return false;
+  }
+
+  // `system`: answering SteamVR's own recenter, so both zero poses are reset
+  // afterwards (see ResetZeroPoses).
+  bool DoRecenter(bool system = false) {
     OpenShmIfNeeded();
-    if (!shm_) return SetMessage("Shared memory unavailable: " + shmError_, kBad);
+    if (!shm_) return Fail("Shared memory unavailable: " + shmError_);
     RecenterOptions rc = opt_.rc;
     rc.viewPitch = viewPitch_;  // level what the user sees through the lenses
     Rigid traw;
     std::string err;
-    if (!BuildTraw(vr::VRSystem(), rc, &traw, &err)) return SetMessage(err, kBad);
+    if (!BuildTraw(vr::VRSystem(), rc, &traw, &err)) return Fail(err);
     const SendResult r = SendCommand(shm_, CMD_RECENTER, &traw);
-    if (r != SendResult::Ok) return SetMessage(std::string("Recenter failed: ") + SendResultText(r), kBad);
-    if (opt_.seatedReset) {
-      // Let the new R reach a couple of frames before sampling the seated zero.
-      std::this_thread::sleep_for(std::chrono::duration<double>(2.0 / DisplayHz()));
-      vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
-    }
+    if (r != SendResult::Ok) return Fail(std::string("Recenter failed: ") + SendResultText(r));
+    const bool seated = ResetZeroPoses(system);
     Haptic();
-    SetMessage(opt_.seatedReset ? "Recentered (seated zero reset too)" : "Recentered", kGood);
+    SetMessage(seated ? "Recentered (seated zero reset too)" : "Recentered", kGood);
     RefreshStatus();
+    return true;
   }
 
-  void DoReset() {
+  bool DoReset(bool system = false) {
     OpenShmIfNeeded();
-    if (!shm_) return SetMessage("Shared memory unavailable: " + shmError_, kBad);
+    if (!shm_) return Fail("Shared memory unavailable: " + shmError_);
     const SendResult r = SendCommand(shm_, CMD_RESET, nullptr);
-    if (r != SendResult::Ok) return SetMessage(std::string("Reset failed: ") + SendResultText(r), kBad);
-    if (opt_.seatedReset) {
-      // The seated zero was moved by the recenter; put it back in front of the
-      // user's (now normal) head pose.
-      std::this_thread::sleep_for(std::chrono::duration<double>(2.0 / DisplayHz()));
-      vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
-    }
+    if (r != SendResult::Ok) return Fail(std::string("Reset failed: ") + SendResultText(r));
+    const bool seated = ResetZeroPoses(system);
     Haptic();
-    SetMessage(opt_.seatedReset ? "Back to normal (seated zero reset too)" : "Back to normal", kGood);
+    SetMessage(seated ? "Back to normal (seated zero reset too)" : "Back to normal", kGood);
     RefreshStatus();
+    return true;
+  }
+
+  // After a recenter / reset, puts the seated zero (if the option is on) or,
+  // for SteamVR's own recenter, both zero poses in front of the new head pose.
+  // Returns whether anything was reset.
+  bool ResetZeroPoses(bool system) {
+    if (!system && !opt_.seatedReset) return false;
+    // Let the new R reach a couple of frames before SteamVR samples the head.
+    std::this_thread::sleep_for(std::chrono::duration<double>(2.0 / DisplayHz()));
+    if (system) {
+      vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseStanding);
+      // SteamVR flags this reset like its own recenter: don't answer it.
+      ignoreSystemRecenterUntil_ = MonotonicSeconds() + 1.0;
+    }
+    vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
+    return true;
+  }
+
+  // SteamVR has just re-zeroed standing and seated space from the head pose
+  // after R (yaw and position only). Tilted over, that yaw is meaningless (the
+  // view axis is near vertical) and R is stale: recline, then let SteamVR
+  // re-zero from the levelled head. Upright, undo any recline and let it
+  // re-zero from the true head. Either way the view ends up facing standing
+  // forward, as after SteamVR's own recenter.
+  void OnSystemRecenter() {
+    if (MonotonicSeconds() < ignoreSystemRecenterUntil_ || !status_.driverAlive) return;
+    HmdSnapshot h;
+    StateSnapshot st;
+    if (!shm_ || !ReadHmd(shm_->hmd, &h) || !ReadState(shm_->state, &st)) return;
+    // H is driver-world: gravity-aligned and before R, i.e. the true head.
+    const double tilt = Deg(ViewTilt({h.q[0], h.q[1], h.q[2], h.q[3]}, viewPitch_));
+    char buf[96];
+    if (tilt > opt_.systemRecenterTilt) {
+      snprintf(buf, sizeof buf, "SteamVR recenter: reclined (view tilted %.0f deg)", tilt);
+      if (DoRecenter(/*system=*/true)) {
+        SetMessage(buf, kGood);
+        ShowToast("Reclined");
+      }
+    } else if (st.flags & FLAG_TRANSFORM_ACTIVE) {
+      snprintf(buf, sizeof buf, "SteamVR recenter: back to normal (view tilted %.0f deg)", tilt);
+      if (DoReset(/*system=*/true)) {
+        SetMessage(buf, kGood);
+        ShowToast("Back to normal");
+      }
+    }
+  }
+
+  // --- toast -------------------------------------------------------------------
+  // What SteamVR's own recenter did depends on the head pose, so say so
+  // briefly in view. SteamVR notifications appear at the edge of view in the
+  // Steam friends style, so this is a small head-locked overlay of our own.
+
+  void ShowToast(const std::string& text) {
+    auto* ov = vr::VROverlay();
+    if (toast_ == vr::k_ulOverlayHandleInvalid) {
+      const vr::EVROverlayError e = ov->CreateOverlay(kToastKey, "Recline", &toast_);
+      if (e != vr::VROverlayError_None) {
+        fprintf(stderr, "toast CreateOverlay: %s\n", ov->GetOverlayErrorNameFromEnum(e));
+        toast_ = vr::k_ulOverlayHandleInvalid;
+        return;
+      }
+      ov->SetOverlayWidthInMeters(toast_, 0.22f);
+      // Above other overlays and nearer than the dashboard, so an open
+      // dashboard does not hide it.
+      ov->SetOverlaySortOrder(toast_, 200);
+      // On the lens-centre view axis, a little below centre, facing the eye.
+      Rigid pose;
+      pose.q = AxisAngle({1, 0, 0}, viewPitch_ - Rad(6));
+      pose.t = Rotate(pose.q, {0, 0, -1.0});
+      vr::HmdMatrix34_t m;
+      ToMatrix34(pose, &m);
+      ov->SetOverlayTransformTrackedDeviceRelative(toast_, vr::k_unTrackedDeviceIndex_Hmd, &m);
+    }
+    Canvas c(kToastW, kToastH);
+    c.Clear({24, 26, 32, 200});
+    c.StrokeRect({0, 0, kToastW, kToastH}, kAccent, 2);
+    c.TextCentered({0, 0, kToastW, kToastH}, text, kBig, kText);
+    // Drawn once while hidden, so SetOverlayRaw's flicker on replace is moot.
+    ov->SetOverlayRaw(toast_, const_cast<uint8_t*>(c.Data()), kToastW, kToastH, 4);
+    ov->SetOverlayAlpha(toast_, 1.0f);
+    ov->ShowOverlay(toast_);
+    toastShownAt_ = MonotonicSeconds();
+  }
+
+  void UpdateToast(double now) {
+    if (toastShownAt_ == 0) return;
+    const double t = now - toastShownAt_;
+    if (t >= kToastHold + kToastFade) {
+      vr::VROverlay()->HideOverlay(toast_);
+      toastShownAt_ = 0;
+    } else if (t > kToastHold) {
+      vr::VROverlay()->SetOverlayAlpha(toast_, float(1.0 - (t - kToastHold) / kToastFade));
+    }
   }
 
   // Bindings SteamVR reports for `action`, also while the dashboard is open. A
@@ -411,7 +514,7 @@ class App {
   enum Hit {
     kHitNone, kHitRecenter, kHitReset, kHitRotFull, kHitRotLevel, kHitPosHeight, kHitPosKeep,
     kHitHeightMinus, kHitHeightPlus, kHitSeated, kHitBindings,
-    kHitHeightSitting, kHitHeightStanding, kHitDashboard
+    kHitHeightSitting, kHitHeightStanding, kHitDashboard, kHitSystem, kHitTiltMinus, kHitTiltPlus
   };
 
   // Approximate average eye heights (m) for the "Target height" presets.
@@ -435,6 +538,13 @@ class App {
         case kHitHeightMinus: opt_.rc.eyeHeight = std::max(0.2, std::round((opt_.rc.eyeHeight - 0.05) * 100) / 100); break;
         case kHitHeightPlus: opt_.rc.eyeHeight = std::min(2.5, std::round((opt_.rc.eyeHeight + 0.05) * 100) / 100); break;
         case kHitSeated: opt_.seatedReset = !opt_.seatedReset; break;
+        case kHitSystem: opt_.systemRecenter = !opt_.systemRecenter; break;
+        case kHitTiltMinus:
+          opt_.systemRecenterTilt = std::max(kMinSystemRecenterTilt, opt_.systemRecenterTilt - 5);
+          break;
+        case kHitTiltPlus:
+          opt_.systemRecenterTilt = std::min(kMaxSystemRecenterTilt, opt_.systemRecenterTilt + 5);
+          break;
         case kHitDashboard:
           // Hiding needs a way back in the headset: warn once if nothing is
           // bound to bring the panel back; a second click hides anyway.
@@ -502,6 +612,13 @@ class App {
     Button({32, y + 6, 34, 34}, opt_.seatedReset ? "x" : "", kHitSeated, opt_.seatedReset);
     c.Text(80, y + 12, "Also reset seated zero pose after recenter / reset", kSmall, kText);
     Button({700, y, 292, 46}, "Edit controller bindings", kHitBindings, false);
+    y += 58;
+    Button({32, y + 6, 34, 34}, opt_.systemRecenter ? "x" : "", kHitSystem, opt_.systemRecenter);
+    c.Text(80, y + 12, "Recline on SteamVR's recenter when tilted over", kSmall, kText);
+    snprintf(buf, sizeof buf, "%.0f deg", opt_.systemRecenterTilt);
+    Button({680, y, 50, 46}, "-", kHitTiltMinus, false);
+    c.TextCentered({730, y, 130, 46}, buf, kSmall, opt_.systemRecenter ? kText : kDim);
+    Button({860, y, 50, 46}, "+", kHitTiltPlus, false);
 
     // Status panel
     y += 54;
@@ -600,6 +717,10 @@ class App {
                            srcRight_ = vr::k_ulInvalidInputValueHandle;
   bool inputOk_ = false;
   bool hideWarned_ = false;  // unbound warning shown; the next click hides
+  double ignoreSystemRecenterUntil_ = 0;
+  vr::VROverlayHandle_t toast_ = vr::k_ulOverlayHandleInvalid;
+  double toastShownAt_ = 0;  // 0: hidden
+  static constexpr double kToastHold = 1.2, kToastFade = 0.4;  // s
   ReclineShm* shm_ = nullptr;
   std::string shmError_;
   DriverStatus status_;

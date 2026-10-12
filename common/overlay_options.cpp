@@ -1,5 +1,6 @@
 #include "overlay_options.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -29,6 +30,9 @@ void LoadOverlayOptions(OverlayOptions* o) {
     else if (k == "eyeHeight" && v >= 0.2 && v <= 2.5) o->rc.eyeHeight = v;
     else if (k == "seatedReset") o->seatedReset = v != 0;
     else if (k == "showInDashboard") o->showInDashboard = v != 0;
+    else if (k == "systemRecenter") o->systemRecenter = v != 0;
+    else if (k == "systemRecenterTilt")
+      o->systemRecenterTilt = std::clamp(v, kMinSystemRecenterTilt, kMaxSystemRecenterTilt);
   }
 }
 
@@ -39,10 +43,12 @@ bool SaveOverlayOptions(const OverlayOptions& o) {
   {
     std::ofstream f(path, std::ios::trunc);
     if (!f) return false;
-    char buf[160];
+    char buf[256];
     snprintf(buf, sizeof buf,
-             "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\nshowInDashboard=%d\n",
-             o.rc.levelOnly, o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset, o.showInDashboard);
+             "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\nshowInDashboard=%d\n"
+             "systemRecenter=%d\nsystemRecenterTilt=%.0f\n",
+             o.rc.levelOnly, o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset, o.showInDashboard,
+             o.systemRecenter, o.systemRecenterTilt);
     f << buf;
     if (!f) return false;
   }

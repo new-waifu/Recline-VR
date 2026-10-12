@@ -42,6 +42,12 @@ explains how and why.
   working. To open the panel again, use the *Show the Recline panel* shortcut
   (below) or run `reclinectl panel show`. If that shortcut is unbound, the panel
   warns first and hides on a second click.
+- **Recline on SteamVR's recenter when tilted over** (off by default): SteamVR's own
+  recenter (system button or menu) then also reclines you when your view is tilted
+  more than the set angle (35° by default, 20–75°; pitch and roll both count, so
+  lying on your back, side or front all work), and undoes the recline when you
+  recenter sitting or standing up. A brief "Reclined" or "Back to normal" in view
+  says which happened. *Recline recenter* still works at any angle.
 - The status area shows whether the driver is loaded, the current rotation, and
   warnings (another tool hooking poses, boundary limitations).
 

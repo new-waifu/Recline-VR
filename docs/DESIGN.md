@@ -119,8 +119,54 @@ frustum the angle is 0 and this is the same as levelling the head axis.
 seated-space apps (and OpenXR `LOCAL`) use the seated zero pose. After a recenter,
 and again after a reset, the client optionally calls
 `IVRChaperone::ResetZeroPose(TrackingUniverseSeated)` so seated apps are centred on
-the user. The standing zero pose is never touched: it is persisted and synced to
-connected PCs.
+the user. Recline's own recenter never touches the standing zero pose: it is
+persisted and synced to connected PCs. The one exception is the reply to SteamVR's
+own recenter (below), which has already reset it.
+
+**SteamVR's own recenter.** The built-in recenter (system button or menu) only
+sets a "reset pending" mark for both zero poses. The next OpenVR client to fetch
+poses computes the new zero poses (yaw and position only) from the HMD pose it
+sees, which is after R, and vrserver persists them and broadcasts
+`VREvent_StandingZeroPoseReset` then `VREvent_SeatedZeroPoseReset`. The standing
+event has `bResetBySystemMenu` set, but so does the one from an app's
+`ResetZeroPose(TrackingUniverseStanding)`: the flag marks a standing reset, not
+its source. Recline's own recenter resets only the seated pose, whose event is
+unflagged. Measured on the Frame, both events arrive within 10 ms with the new
+zero poses already in place.
+
+With *Recline on SteamVR's recenter* on, the overlay answers that flagged event
+from the true head pose H (driver-world: gravity-aligned and before R). Its
+measure is the tilt of the lens-centre view frame from upright, the angle between
+the frame's up axis and world up, so pitch and roll combine and lying on the
+back, side or front all count. Over the threshold (35° by default, 20–75°), it
+reclines; at or under it, it resets an active recline. Either way it then calls
+`ResetZeroPose` for standing and seated space, so SteamVR re-zeroes from the
+corrected head:
+
+- Lying down, SteamVR's yaw is meaningless. It comes from the head's forward axis
+  projected onto the floor, which is short when the view is near vertical, and on
+  the Frame the head axis tips past vertical before the view does (the lens looks
+  14° below it). Five presses lying flat gave zero yaws spread over 140°.
+  Re-zeroing after the recline uses a level head, so standing forward becomes the
+  view direction, whatever the Rotation setting.
+- Upright with a recline active, SteamVR has zeroed from the reclined pose, which
+  is wrong once R is removed.
+
+Because its own standing reset is flagged too, the overlay ignores flagged
+events for a second after making one; it arrives about 40 ms later. Another app
+resetting the standing pose is answered like the built-in recenter. Hooking
+vrserver's zero-pose handler instead would avoid the brief yaw jump before the
+recline lands, but the handler is reached only through internal message
+dispatch with no stable layout to check, and a mistake there takes down
+vrserver.
+
+Which way the button went depends on the head pose, so the overlay says so: a
+small head-locked toast ("Reclined" / "Back to normal") on the lens-centre view
+axis, 1 m away so it sits in front of an open dashboard, for about 1.5 s. It is
+not shown when nothing changed (upright to upright), nor for Recline's own
+recenter and reset, which the user asked for explicitly. `IVRNotifications`
+was tried first: the Frame shows those at the edge of view in the Steam
+friends/achievements style, which is easy to miss for a change of view.
 
 ## Shared-memory protocol `/recline_v1`
 
