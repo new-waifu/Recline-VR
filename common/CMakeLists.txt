@@ -15,6 +15,6 @@ if(NOT WIN32)
 endif()
 
 # Client side of the protocol, for the overlay and reclinectl.
-add_library(recline_client STATIC recline_client.cpp)
+add_library(recline_client STATIC recline_client.cpp overlay_options.cpp)
 target_compile_options(recline_client PRIVATE ${WARN})
 target_link_libraries(recline_client PUBLIC recline_shm)

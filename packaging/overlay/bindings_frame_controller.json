@@ -1,6 +1,6 @@
 {
 	"controller_type": "frame_controller",
-	"description": "Recline VR defaults: right grip + trigger + bumper + Y to recenter, + X to reset",
+	"description": "Recline VR defaults: right grip + trigger + bumper + Y to recenter, + X to reset, + A to show the panel",
 	"name": "Recline VR defaults",
 	"bindings": {
 		"/actions/recline": {
@@ -34,6 +34,12 @@
 					"mode": "button",
 					"inputs": {},
 					"parameters": {}
+				},
+				{
+					"path": "/user/hand/right/input/a",
+					"mode": "button",
+					"inputs": {},
+					"parameters": {}
 				}
 			],
 			"chords": [
@@ -53,6 +59,15 @@
 						[ "/user/hand/right/input/trigger", "click" ],
 						[ "/user/hand/right/input/bumper", "single" ],
 						[ "/user/hand/right/input/x", "single" ]
+					]
+				},
+				{
+					"output": "/actions/recline/in/show_panel",
+					"inputs": [
+						[ "/user/hand/right/input/grip", "click" ],
+						[ "/user/hand/right/input/trigger", "click" ],
+						[ "/user/hand/right/input/bumper", "single" ],
+						[ "/user/hand/right/input/a", "single" ]
 					]
 				}
 			],

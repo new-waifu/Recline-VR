@@ -13,12 +13,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "canvas.h"
+#include "overlay_options.h"
 #include "platform.h"
 #include "recline_client.h"
 #include "vk_texture.h"
@@ -42,11 +42,6 @@ const Color kAccent{70, 140, 255, 255};
 const Color kGood{90, 200, 120, 255};
 const Color kWarn{255, 190, 70, 255};
 const Color kBad{255, 95, 95, 255};
-
-// std::filesystem path from a UTF-8 string (the platform layer's encoding).
-std::filesystem::path Utf8Path(const std::string& s) {
-  return std::filesystem::path(std::u8string(s.begin(), s.end()));
-}
 
 const char* AppErr(vr::EVRApplicationError e) {
   return vr::VRApplications() ? vr::VRApplications()->GetApplicationsErrorNameFromEnum(e) : "?";
@@ -114,53 +109,6 @@ int Unregister(const std::string& manifest) {
 }
 
 // ---------------------------------------------------------------------------
-// Persistent UI options (not the transform: that is never persisted).
-
-struct Options {
-  RecenterOptions rc;
-  bool seatedReset = true;
-};
-
-namespace fs = std::filesystem;
-
-fs::path ConfigPath() { return Utf8Path(UserConfigDir()) / "recline-vr" / "overlay.conf"; }
-
-void LoadOptions(Options* o) {
-  std::ifstream f(ConfigPath());
-  std::string line;
-  while (std::getline(f, line)) {
-    const size_t eq = line.find('=');
-    if (eq == std::string::npos) continue;
-    const std::string k = line.substr(0, eq);
-    char* end;
-    const double v = strtod(line.c_str() + eq + 1, &end);
-    if (end == line.c_str() + eq + 1) continue;
-    if (k == "levelOnly") o->rc.levelOnly = v != 0;
-    else if (k == "keepPosition") o->rc.keepPosition = v != 0;
-    else if (k == "eyeHeight" && v >= 0.2 && v <= 2.5) o->rc.eyeHeight = v;
-    else if (k == "seatedReset") o->seatedReset = v != 0;
-  }
-}
-
-void SaveOptions(const Options& o) {
-  const fs::path path = ConfigPath();
-  std::error_code ec;
-  fs::create_directories(path.parent_path(), ec);
-  {
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) return;
-    char buf[128];
-    snprintf(buf, sizeof buf, "levelOnly=%d\nkeepPosition=%d\neyeHeight=%.2f\nseatedReset=%d\n",
-             o.rc.levelOnly, o.rc.keepPosition, o.rc.eyeHeight, o.seatedReset);
-    f << buf;
-  }
-  // Explicit mode (and repair of an older file): SteamVR may launch us with
-  // umask 0, which would leave the file world-writable.
-  fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read |
-                            fs::perms::others_read, ec);
-}
-
-// ---------------------------------------------------------------------------
 
 class App {
  public:
@@ -168,22 +116,11 @@ class App {
 
   int Run() {
     if (!InitVR(vr::VRApplication_Overlay)) return 1;
-    LoadOptions(&opt_);
+    ReloadOptionsIfChanged();
     const char* flip = getenv("RECLINE_MOUSE_FLIP_Y");
     if (flip) flipMouseY_ = atoi(flip) != 0;
 
     auto* ov = vr::VROverlay();
-    vr::EVROverlayError oe = ov->CreateDashboardOverlay(kOverlayKey, "Recline", &main_, &thumb_);
-    if (oe != vr::VROverlayError_None) {
-      fprintf(stderr, "CreateDashboardOverlay: %s\n", ov->GetOverlayErrorNameFromEnum(oe));
-      vr::VR_Shutdown();
-      return 1;
-    }
-    ov->SetOverlayWidthInMeters(main_, 2.0f);
-    ov->SetOverlayInputMethod(main_, vr::VROverlayInputMethod_Mouse);
-    vr::HmdVector2_t scale{{float(kW), float(kH)}};
-    ov->SetOverlayMouseScale(main_, &scale);
-    SetThumbnail();
     {
       std::string err;
       vkOk_ = vk_.Init(kW, kH, &err);
@@ -196,7 +133,11 @@ class App {
     SetupInput();
     OpenShmIfNeeded();
     RefreshStatus();
-    Render();
+    // Fails if the key is taken, e.g. by a second instance.
+    if (opt_.showInDashboard && !CreatePanel()) {
+      vr::VR_Shutdown();
+      return 1;
+    }
 
     double nextStatus = 0;
     while (!quit_) {
@@ -205,10 +146,12 @@ class App {
       const double now = MonotonicSeconds();
       if (now >= nextStatus) {
         nextStatus = now + 0.25;
+        ReloadOptionsIfChanged();
         OpenShmIfNeeded();
         RefreshStatus();
         dirty_ = true;
       }
+      UpdatePanel(now);
       if ((dirty_ || uploadPending_) && ov->IsOverlayVisible(main_)) Render();
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
@@ -230,10 +173,78 @@ class App {
     in->GetActionSetHandle("/actions/recline", &actionSet_);
     in->GetActionHandle("/actions/recline/in/recenter", &actRecenter_);
     in->GetActionHandle("/actions/recline/in/reset", &actReset_);
+    in->GetActionHandle("/actions/recline/in/show_panel", &actShow_);
     in->GetActionHandle("/actions/recline/out/haptic", &actHaptic_);
     in->GetInputSourceHandle("/user/hand/left", &srcLeft_);
     in->GetInputSourceHandle("/user/hand/right", &srcRight_);
     inputOk_ = true;
+  }
+
+  // reclinectl edits overlay.conf (panel show / hide): pick up changes.
+  void ReloadOptionsIfChanged() {
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(OverlayOptionsPath(), ec);
+    if (ec || t == optionsTime_) return;
+    optionsTime_ = t;
+    OverlayOptions o;
+    LoadOverlayOptions(&o);
+    opt_ = o;
+    dirty_ = true;
+  }
+
+  // --- dashboard panel ---------------------------------------------------------
+
+  bool HavePanel() const { return main_ != vr::k_ulOverlayHandleInvalid; }
+
+  bool CreatePanel() {
+    auto* ov = vr::VROverlay();
+    const vr::EVROverlayError e = ov->CreateDashboardOverlay(kOverlayKey, "Recline", &main_, &thumb_);
+    if (e != vr::VROverlayError_None) {
+      fprintf(stderr, "CreateDashboardOverlay: %s\n", ov->GetOverlayErrorNameFromEnum(e));
+      main_ = thumb_ = vr::k_ulOverlayHandleInvalid;
+      return false;
+    }
+    ov->SetOverlayWidthInMeters(main_, 2.0f);
+    ov->SetOverlayInputMethod(main_, vr::VROverlayInputMethod_Mouse);
+    vr::HmdVector2_t scale{{float(kW), float(kH)}};
+    ov->SetOverlayMouseScale(main_, &scale);
+    SetThumbnail();
+    uploaded_.clear();
+    Render();
+    return true;
+  }
+
+  void DestroyPanel() {
+    vr::VROverlay()->DestroyOverlay(thumb_);
+    vr::VROverlay()->DestroyOverlay(main_);
+    main_ = thumb_ = vr::k_ulOverlayHandleInvalid;
+    uploaded_.clear();
+  }
+
+  // The dashboard entry exists while it is wanted: always when shown in the
+  // dashboard, otherwise from a summon until the dashboard next closes. It is
+  // never removed while on screen (the dashboard is open, or the panel was
+  // detached from it), so hiding it does not pull the panel out from under the
+  // pointer or out of a game.
+  void UpdatePanel(double now) {
+    auto* ov = vr::VROverlay();
+    const bool open = ov->IsDashboardVisible();
+    if (dashboardWasOpen_ && !open) summoned_ = false;
+    dashboardWasOpen_ = open;
+    const bool want = opt_.showInDashboard || summoned_;
+    if (want && !HavePanel()) {
+      if (now < nextPanelAttempt_) return;
+      if (!CreatePanel()) nextPanelAttempt_ = now + 5.0;
+    } else if (!want && HavePanel() && !open && !ov->IsOverlayVisible(main_)) {
+      DestroyPanel();
+    }
+  }
+
+  // Opens the dashboard on the panel, creating it first if it is hidden.
+  void ShowPanel() {
+    if (!opt_.showInDashboard) summoned_ = true;
+    if (!HavePanel() && !CreatePanel()) return;
+    vr::VROverlay()->ShowDashboard(kOverlayKey);
   }
 
   void OpenShmIfNeeded() {
@@ -291,6 +302,7 @@ class App {
     if (vr::VRInput()->UpdateActionState(&set, sizeof set, 1) != vr::VRInputError_None) return;
     if (Pressed(actRecenter_)) DoRecenter();
     if (Pressed(actReset_)) DoReset();
+    if (Pressed(actShow_)) ShowPanel();
   }
 
   bool Pressed(vr::VRActionHandle_t a) {
@@ -352,6 +364,24 @@ class App {
     RefreshStatus();
   }
 
+  // Bindings SteamVR reports for `action`, also while the dashboard is open. A
+  // chord counts as one (unnamed) binding, so the inputs cannot be named. Only
+  // connected controllers' bindings are loaded, so 0 may also mean "not yet".
+  uint32_t BindingCount(vr::VRActionHandle_t action) {
+    vr::InputBindingInfo_t info[4];
+    uint32_t count = 0;
+    if (!inputOk_ ||
+        vr::VRInput()->GetActionBindingInfo(action, info, sizeof info[0], 4, &count) != vr::VRInputError_None)
+      return 0;
+    return count;
+  }
+
+  // "Show the Recline panel" is known to be unbound: the other shortcuts'
+  // bindings are loaded, but it has none.
+  bool ShowPanelUnbound() {
+    return BindingCount(actShow_) == 0 && (BindingCount(actRecenter_) > 0 || BindingCount(actReset_) > 0);
+  }
+
   // SteamVR's own route to an overlay app's bindings is buried; open it directly.
   void OpenBindings() {
     const vr::EVRInputError e = vr::VRInput()->OpenBindingUI(
@@ -381,7 +411,7 @@ class App {
   enum Hit {
     kHitNone, kHitRecenter, kHitReset, kHitRotFull, kHitRotLevel, kHitPosHeight, kHitPosKeep,
     kHitHeightMinus, kHitHeightPlus, kHitSeated, kHitBindings,
-    kHitHeightSitting, kHitHeightStanding
+    kHitHeightSitting, kHitHeightStanding, kHitDashboard
   };
 
   // Approximate average eye heights (m) for the "Target height" presets.
@@ -405,9 +435,23 @@ class App {
         case kHitHeightMinus: opt_.rc.eyeHeight = std::max(0.2, std::round((opt_.rc.eyeHeight - 0.05) * 100) / 100); break;
         case kHitHeightPlus: opt_.rc.eyeHeight = std::min(2.5, std::round((opt_.rc.eyeHeight + 0.05) * 100) / 100); break;
         case kHitSeated: opt_.seatedReset = !opt_.seatedReset; break;
+        case kHitDashboard:
+          // Hiding needs a way back in the headset: warn once if nothing is
+          // bound to bring the panel back; a second click hides anyway.
+          if (opt_.showInDashboard && !hideWarned_ && ShowPanelUnbound()) {
+            hideWarned_ = true;
+            return SetMessage("\"Show the Recline panel\" is unbound - click again to hide anyway", kWarn);
+          }
+          hideWarned_ = false;
+          opt_.showInDashboard = !opt_.showInDashboard;
+          // Keep the panel until the dashboard closes.
+          if (!opt_.showInDashboard) summoned_ = true;
+          SetMessage(opt_.showInDashboard ? "Shown in the dashboard"
+                                          : "Removed from the dashboard once it closes", kText);
+          break;
         default: return;
       }
-      SaveOptions(opt_);
+      SaveOverlayOptions(opt_);
       dirty_ = true;
       return;
     }
@@ -428,6 +472,8 @@ class App {
     Canvas& c = canvas_;
     c.Clear(kBg);
     c.Text(32, 22, "Recline VR", kBig, kText);
+    Button({760, 24, 34, 34}, opt_.showInDashboard ? "x" : "", kHitDashboard, opt_.showInDashboard);
+    c.Text(808, 30, "Show in dashboard", kSmall, kText);
 
     Button({32, 80, 470, 90}, "RECLINE RECENTER", kHitRecenter, false, kBig);
     Button({522, 80, 470, 90}, "Reset to normal", kHitReset, false, kBig);
@@ -501,6 +547,8 @@ class App {
       line("PC Space Calibrator calibration is invalid while reclined.", kDim);
 #endif
     }
+    if (!opt_.showInDashboard)
+      line("Reopen with the \"Show the Recline panel\" shortcut or reclinectl panel show", kDim);
     if (!message_.empty()) line(message_, messageColor_);
 
     Upload();
@@ -543,14 +591,15 @@ class App {
 
   std::string dir_;
   Canvas canvas_;
-  Options opt_;
+  OverlayOptions opt_;
   vr::VROverlayHandle_t main_ = vr::k_ulOverlayHandleInvalid, thumb_ = vr::k_ulOverlayHandleInvalid;
   vr::VRActionSetHandle_t actionSet_ = vr::k_ulInvalidActionSetHandle;
   vr::VRActionHandle_t actRecenter_ = vr::k_ulInvalidActionHandle, actReset_ = vr::k_ulInvalidActionHandle,
-                       actHaptic_ = vr::k_ulInvalidActionHandle;
+                       actShow_ = vr::k_ulInvalidActionHandle, actHaptic_ = vr::k_ulInvalidActionHandle;
   vr::VRInputValueHandle_t srcLeft_ = vr::k_ulInvalidInputValueHandle,
                            srcRight_ = vr::k_ulInvalidInputValueHandle;
   bool inputOk_ = false;
+  bool hideWarned_ = false;  // unbound warning shown; the next click hides
   ReclineShm* shm_ = nullptr;
   std::string shmError_;
   DriverStatus status_;
@@ -562,6 +611,10 @@ class App {
   // left; our canvas is top-down. Override with RECLINE_MOUSE_FLIP_Y=0.
   bool flipMouseY_ = true;
   bool dirty_ = true, quit_ = false;
+  std::filesystem::file_time_type optionsTime_{};
+  bool summoned_ = false;          // panel wanted until the dashboard next closes
+  bool dashboardWasOpen_ = false;
+  double nextPanelAttempt_ = 0;    // CreatePanel retry backoff
   static constexpr double kMinUploadInterval = 0.1;  // s
   std::vector<uint8_t> uploaded_;  // last pixels sent to SteamVR
   VkOverlayTexture vk_;
@@ -576,7 +629,7 @@ class App {
 
 void Usage() {
   printf("usage: recline_overlay [--register | --unregister]\n"
-         "  (no args)      run as SteamVR dashboard overlay\n"
+         "  (no args)      run as SteamVR overlay (dashboard panel + input actions)\n"
          "  --register     register manifest with SteamVR and enable auto-launch\n"
          "  --unregister   disable auto-launch and remove the manifest\n");
 }

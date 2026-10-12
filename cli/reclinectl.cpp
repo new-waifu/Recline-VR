@@ -7,6 +7,7 @@
 //   reclinectl reset [--no-seated-reset]
 //   reclinectl set <yaw> <pitch> <roll> <x> <y> <z>     (degrees, meters)
 //   reclinectl poses      (prints device poses per tracking universe, for testing)
+//   reclinectl panel show|hide
 
 #include <openvr.h>
 
@@ -19,6 +20,7 @@
 #include <thread>
 
 
+#include "overlay_options.h"
 #include "recline_client.h"
 
 using namespace recline;
@@ -33,6 +35,7 @@ void Usage() {
           "       reclinectl reset [--no-seated-reset]\n"
           "       reclinectl poses        (HMD/controller poses as apps see them)\n"
           "       reclinectl bindings     (open the controller binding editor in the headset)\n"
+          "       reclinectl panel show|hide   (the overlay's icon in the SteamVR dashboard)\n"
           "       reclinectl setting get <section> <key>\n"
           "       reclinectl setting set <section> <key> <bool|int|float|string>\n"
           "       reclinectl setting remove <section> <key>\n"
@@ -371,6 +374,28 @@ int Bindings() {
   return 0;
 }
 
+// Keeps or removes the overlay's dashboard entry. Edits overlay.conf, which a
+// running overlay picks up within a second; a removal waits until the
+// dashboard is closed.
+int Panel(int argc, char** argv) {
+  const std::string a = argc == 1 ? argv[0] : "";
+  if (a != "show" && a != "hide") {
+    Usage();
+    return 2;
+  }
+  OverlayOptions o;
+  LoadOverlayOptions(&o);
+  o.showInDashboard = a == "show";
+  if (!SaveOverlayOptions(o)) {
+    const std::u8string path = OverlayOptionsPath().u8string();
+    fprintf(stderr, "error: could not write %s\n", reinterpret_cast<const char*>(path.c_str()));
+    return 1;
+  }
+  printf(o.showInDashboard ? "Recline panel shown in the SteamVR dashboard\n"
+                           : "Recline panel removed from the SteamVR dashboard once it is closed\n");
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -386,6 +411,7 @@ int main(int argc, char** argv) {
   if (c == "poses") return Poses();
   if (c == "bindings") return Bindings();
   if (c == "setting") return Setting(argc - 2, argv + 2);
+  if (c == "panel") return Panel(argc - 2, argv + 2);
   Usage();
   return 2;
 }

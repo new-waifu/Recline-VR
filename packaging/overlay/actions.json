@@ -6,6 +6,7 @@
 	"actions" : [
 		{ "name" : "/actions/recline/in/recenter", "type" : "boolean", "requirement" : "optional" },
 		{ "name" : "/actions/recline/in/reset", "type" : "boolean", "requirement" : "optional" },
+		{ "name" : "/actions/recline/in/show_panel", "type" : "boolean", "requirement" : "optional" },
 		{ "name" : "/actions/recline/out/haptic", "type" : "vibration" }
 	],
 	"action_sets" : [
@@ -17,6 +18,7 @@
 			"/actions/recline" : "Recline VR",
 			"/actions/recline/in/recenter" : "Recline recenter (current head pose becomes level/forward)",
 			"/actions/recline/in/reset" : "Reset recline to normal",
+			"/actions/recline/in/show_panel" : "Show the Recline panel",
 			"/actions/recline/out/haptic" : "Confirmation pulse"
 		}
 	]

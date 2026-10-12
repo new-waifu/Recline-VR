@@ -173,6 +173,32 @@ atomics don't work across processes.
 - `debugPitchDeg` (driver setting) applies a fixed pitch about the head at startup,
   for testing without any client.
 
+## Dashboard panel
+
+The controller actions belong to the overlay app (`user.recline.overlay`, at
+global overlay priority), not to its dashboard overlay, so the panel is optional:
+with `showInDashboard=0` the process runs without one and creates it only when
+summoned (the *Show the Recline panel* action), until the dashboard next closes.
+The panel is never destroyed while on screen (the dashboard is open, or the panel
+was detached from it into a game), so hiding it does not pull it out from under
+the pointer. `reclinectl panel show|hide` edits `overlay.conf`; the overlay
+reloads the file when its modification time changes.
+
+The panel is laser-mouse only. The Frame's dashboard offers a gamepad mode for
+panels whose overlay sets flag bit 4 (a gap in the public `VROverlayFlags`): it
+gives the panel's process SteamVR Input focus, and a normal-priority action set
+then receives the controller. It was tried and dropped: after a flagged panel
+had been shown and the dashboard closed, all of the app's action sets stayed
+inactive, the global shortcuts included, until a panel without the flag was
+opened and closed. Gamepads are no option either: the Frame's SteamVR ships
+without the `gamepad` driver, so it has no gamepad input profile.
+
+The Frame's "+" menu was considered as a home for the panel instead. It belongs to
+the Steam client, not SteamVR: its "Launch Program" list is the client's
+non-Steam-app scan of XDG `.desktop` entries (visibility keys matched against
+`XDG_CURRENT_DESKTOP=gamescope`), shown only on the Frame. A desktop entry would
+add a file to manage and does nothing on other platforms, so it is not used for now.
+
 ## Coexistence with other pose hooks
 
 Other tools (e.g. Space Calibrator-style calibrators) may hook the same slot.

@@ -35,6 +35,13 @@ explains how and why.
 - **Also reset seated zero pose after recenter / reset** (on by default) keeps
   seated-space games, sims and many OpenXR titles centred on you.
 - **Edit controller bindings** opens SteamVR's binding editor directly on this app.
+- **Show in dashboard** (on by default): untick it to remove the Recline icon from
+  the SteamVR dashboard once the dashboard closes; the controller shortcuts keep
+  working. To open the panel again, bind *Show the Recline panel* (unbound by
+  default) or run `reclinectl panel show`.
+  working. To open the panel again, use the *Show the Recline panel* shortcut
+  (below) or run `reclinectl panel show`. If that shortcut is unbound, the panel
+  warns first and hides on a second click.
 - The status area shows whether the driver is loaded, the current rotation, and
   warnings (another tool hooking poses, boundary limitations).
 
@@ -43,8 +50,9 @@ explains how and why.
 other headsets work too.
 
 **Controller shortcuts** (default bindings, changeable via the button above). On the
-right controller, hold **grip + trigger + bumper** and press **Y** to recenter, or
-**X** to reset. They are plain SteamVR chords that work while a game is running.
+right controller, hold **grip + trigger + bumper** and press **Y** to recenter,
+**X** to reset, or **A** to show the panel. They are plain SteamVR chords that work
+while a game is running (but not while the dashboard is open).
 Defaults are deliberately finger-twisting combinations that normal gameplay won't
 produce.
 
@@ -56,6 +64,7 @@ produce.
     reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   # explicit rotation (deg, m), testing
     reclinectl poses                       # device poses per tracking space + display geometry
     reclinectl bindings                    # open the binding editor in the headset
+    reclinectl panel show|hide             # Recline icon in the SteamVR dashboard
     reclinectl setting get|set|remove <section> <key> [value]  # SteamVR settings, for experiments
 
 ## Install / uninstall

@@ -1,6 +1,6 @@
 {
 	"controller_type": "knuckles",
-	"description": "Recline VR defaults: right trigger + grip + A + B to recenter, same on the left hand to reset",
+	"description": "Recline VR defaults: right trigger + grip + A + B to recenter, same on the left hand to reset, right trigger + grip + thumbstick click to show the panel; in the panel's gamepad mode, stick to move and right A to press",
 	"name": "Recline VR defaults",
 	"bindings": {
 		"/actions/recline": {
@@ -52,6 +52,12 @@
 					"mode": "button",
 					"inputs": {},
 					"parameters": {}
+				},
+				{
+					"path": "/user/hand/right/input/thumbstick",
+					"mode": "joystick",
+					"inputs": {},
+					"parameters": {}
 				}
 			],
 			"chords": [
@@ -71,6 +77,14 @@
 						[ "/user/hand/left/input/trigger", "click" ],
 						[ "/user/hand/left/input/a", "single" ],
 						[ "/user/hand/left/input/b", "single" ]
+					]
+				},
+				{
+					"output": "/actions/recline/in/show_panel",
+					"inputs": [
+						[ "/user/hand/right/input/grip", "click" ],
+						[ "/user/hand/right/input/trigger", "click" ],
+						[ "/user/hand/right/input/thumbstick", "click" ]
 					]
 				}
 			],
