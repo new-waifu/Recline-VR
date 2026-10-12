@@ -106,6 +106,11 @@ The OpenVR SDK is vendored in `third_party/openvr`; the overlay and CLI link its
 The overlay uses Vulkan when its headers are available at build time and falls back
 to `SetOverlayRaw` otherwise.
 
+The version (next to the panel title, `reclinectl --version`, and the driver's line
+in `vrserver.txt`) comes from `git describe`: `v1.1.0` for a tagged commit,
+`v1.1.0+3.14d0169` three commits later, `-dirty` with uncommitted changes.
+`-DRECLINE_VERSION=...` overrides it.
+
 ## Settings
 
 Driver (`recline/resources/settings/default.vrsettings`, section `driver_recline`):

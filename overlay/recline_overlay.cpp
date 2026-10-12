@@ -22,6 +22,7 @@
 #include "overlay_options.h"
 #include "platform.h"
 #include "recline_client.h"
+#include "recline_version.h"
 #include "vk_texture.h"
 
 namespace {
@@ -118,6 +119,7 @@ class App {
   explicit App(std::string dir) : dir_(std::move(dir)), canvas_(kW, kH) {}
 
   int Run() {
+    fprintf(stderr, "recline_overlay %s\n", RECLINE_VERSION);
     if (!InitVR(vr::VRApplication_Overlay)) return 1;
     ReloadOptionsIfChanged();
     const char* flip = getenv("RECLINE_MOUSE_FLIP_Y");
@@ -628,6 +630,9 @@ class App {
     Canvas& c = canvas_;
     c.Clear(kBg);
     c.Text(32, 22, "Recline VR", kBig, kText);
+    // On the title's baseline.
+    c.Text(32 + Canvas::TextWidth("Recline VR", kBig) + 14, 22 + kBig.ascent - kSmall.ascent, RECLINE_VERSION,
+           kSmall, kDim);
     Button({760, 24, 34, 34}, opt_.showInDashboard ? "x" : "", kHitDashboard, opt_.showInDashboard);
     c.Text(808, 30, "Show in dashboard", kSmall, kText);
 

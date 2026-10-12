@@ -110,6 +110,22 @@ endif()
 set(COMMON_INC ${CMAKE_CURRENT_SOURCE_DIR}/common ${OPENVR_INCLUDE_DIR})
 set(STAGE_DIR ${CMAKE_BINARY_DIR}/stage)
 
+# --- version ------------------------------------------------------------------------
+# recline_version.h, from git on every build (see cmake/version.cmake); the
+# header is only rewritten, and its users rebuilt, when the version changes.
+set(RECLINE_VERSION "" CACHE STRING "Version to embed instead of the one git describes")
+set(VERSION_DIR ${CMAKE_BINARY_DIR}/generated)
+add_custom_target(recline_version
+  COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR} -DOUT=${VERSION_DIR}/recline_version.h
+          -DOVERRIDE=${RECLINE_VERSION} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.cmake
+  BYPRODUCTS ${VERSION_DIR}/recline_version.h
+  VERBATIM)
+
+function(recline_uses_version target)
+  add_dependencies(${target} recline_version)
+  target_include_directories(${target} PRIVATE ${VERSION_DIR})
+endfunction()
+
 # An app linking the openvr_api loader, staged at the top of the layout.
 function(recline_app target)
   add_executable(${target} ${ARGN})
@@ -117,6 +133,7 @@ function(recline_app target)
   target_link_libraries(${target} PRIVATE recline_client ${OPENVR_API})
   target_link_options(${target} PRIVATE ${STATIC_RUNTIME})
   set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${STAGE_DIR})
+  recline_uses_version(${target})
 endfunction()
 
 add_subdirectory(common)

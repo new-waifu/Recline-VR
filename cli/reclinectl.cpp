@@ -22,6 +22,7 @@
 
 #include "overlay_options.h"
 #include "recline_client.h"
+#include "recline_version.h"
 
 using namespace recline;
 
@@ -29,7 +30,7 @@ namespace {
 
 void Usage() {
   fprintf(stderr,
-          "usage: reclinectl status\n"
+          "usage: reclinectl status | --version\n"
           "       reclinectl recenter [--keep-position] [--level-only] [--height M]\n"
           "                           [--no-seated-reset]\n"
           "       reclinectl reset [--no-seated-reset]\n"
@@ -56,7 +57,13 @@ void PrintR(const char* label, const double q[4], const double t[3]) {
          Deg(r), t[0], t[1], t[2]);
 }
 
+int Version() {
+  printf("reclinectl %s\n", RECLINE_VERSION);
+  return 0;
+}
+
 int Status() {
+  Version();
   ReclineShm* shm = Open();
   if (!shm) return 1;
   HmdSnapshot h0;
@@ -404,6 +411,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   const std::string c = argv[1];
+  if (c == "--version") return Version();
   if (c == "status") return Status();
   if (c == "recenter") return Recenter(argc - 2, argv + 2);
   if (c == "reset") return Reset(argc - 2, argv + 2);

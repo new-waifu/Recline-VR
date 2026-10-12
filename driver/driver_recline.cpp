@@ -27,6 +27,7 @@
 #include "pose_math.h"
 #include "recline_math.h"
 #include "recline_shm.h"
+#include "recline_version.h"
 #ifdef RECLINE_FRAME
 #include "slot_patch.h"
 #include "spawn_inject.h"
@@ -266,7 +267,7 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
  public:
   vr::EVRInitError Init(vr::IVRDriverContext* ctx) override {
     VR_INIT_SERVER_DRIVER_CONTEXT(ctx);
-    Log("driver_recline init (shm v%u)", kVersion);
+    Log("driver_recline %s init (shm v%u)", RECLINE_VERSION, kVersion);
     PinSelf();
 #ifdef RECLINE_FRAME
     shimPath_ = ShimPath();

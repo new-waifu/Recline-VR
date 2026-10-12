@@ -17,6 +17,7 @@ if(NOT WIN32)
                       -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.map)
 endif()
 target_link_libraries(driver_recline PRIVATE recline_pose_hook)
+recline_uses_version(driver_recline)
 set_target_properties(driver_recline PROPERTIES PREFIX ""
   LIBRARY_OUTPUT_DIRECTORY ${STAGE_DIR}/recline/bin/${VR_PLATFORM}
   RUNTIME_OUTPUT_DIRECTORY ${STAGE_DIR}/recline/bin/${VR_PLATFORM})
