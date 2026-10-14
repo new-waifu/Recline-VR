@@ -427,8 +427,10 @@ elsewhere:
 - the XRService passthrough shim and the driver's spawn injection that loads it;
 - the overlay's hint about PC-side calibration while streaming.
 
-The rest is generic. A Linux x86-64 build compiles and links, but hasn't been
-tested with a PC headset. A Windows build (MSVC, static CRT) passes the unit
+The rest is generic. A Linux x86-64 build has run in SteamVR with the null
+headset driver (under WSL, where SteamVR's compositor can't start, so without the
+overlay): the driver loads and hooks, and `reclinectl` sets, applies and resets a
+recline. It hasn't been tested with a PC headset. A Windows build (MSVC, static CRT) passes the unit
 tests and has run in SteamVR with the null headset driver: the driver loads and
 hooks, the overlay auto-launches and `reclinectl` reaches the driver, but it
 hasn't been tested with a real headset. Its shared memory is a
@@ -479,9 +481,12 @@ is running, a `VRApplication_Utility` client gets a short-lived vrserver that
 loads no drivers and exits two seconds after the client leaves. So the Windows
 installers register and unregister whether or not SteamVR is running, and
 installing with it stopped is best: nothing is locked, and the driver and the
-overlay start with SteamVR's next start without a restart. The Linux installers
-still register only while SteamVR runs; the same should hold there, but it is
-untested on the Frame, where the system manages SteamVR.
+overlay start with SteamVR's next start without a restart. Not so on desktop
+Linux: Steam runs SteamVR inside its runtime container, and a vrserver started by
+a client outside it fails to load (its libraries live in the container). On the
+Frame it works, but the short-lived vrserver brings up the whole stack (camera
+driver, XRService, compositor, eye tracking) for each call. So the Linux
+installers register only while SteamVR runs.
 
 Registration lives in `reclinectl register` / `unregister` rather than in the
 overlay, because on Windows the overlay is a GUI-subsystem program: SteamVR
