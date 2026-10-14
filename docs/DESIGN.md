@@ -455,6 +455,15 @@ installers find `vrpathreg` themselves: on Linux in `/opt/steamvr` or a Steam
 install (or `$VRPATHREG`), on Windows through the runtime path in
 `openvrpaths.vrpath`, as the OpenVR loader does.
 
+Registering the overlay needs a vrserver, but not a running SteamVR: when none
+is running, a `VRApplication_Utility` client gets a short-lived vrserver that
+loads no drivers and exits two seconds after the client leaves. So the Windows
+installers register and unregister whether or not SteamVR is running, and
+installing with it stopped is best: nothing is locked, and the driver and the
+overlay start with SteamVR's next start without a restart. The Linux installers
+still register only while SteamVR runs; the same should hold there, but it is
+untested on the Frame, where the system manages SteamVR.
+
 ### Release builds
 
 `.github/workflows/build.yml` builds each platform, checks it, and merges the

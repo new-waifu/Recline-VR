@@ -1,5 +1,4 @@
-# Uninstalls Recline VR. SteamVR must be running for the overlay
-# unregistration step.
+# Uninstalls Recline VR: unregisters the overlay and the driver.
 #
 #   uninstall.cmd [-Dest <dir>] [-NoPause]
 param(
@@ -23,16 +22,19 @@ function Find-VRPathReg {
 
 try {
   $vrpathreg = Find-VRPathReg
-  $overlay = Join-Path $Dest 'bin\win64\recline_overlay.exe'
-  if (-not (Get-Process -Name vrserver -ErrorAction SilentlyContinue)) {
-    throw "SteamVR is not running, so the overlay can't be unregistered. Start SteamVR and run this again."
-  }
-  & $overlay --unregister
+  # Works with SteamVR stopped too (see install.ps1). Checked before
+  # unregistering, which may start a short-lived vrserver.
+  $steamvrRunning = [bool](Get-Process -Name vrserver -ErrorAction SilentlyContinue)
+  & (Join-Path $Dest 'bin\win64\recline_overlay.exe') --unregister
   if ($LASTEXITCODE -ne 0) { throw "recline_overlay --unregister failed ($LASTEXITCODE)" }
   & $vrpathreg removedriver $Dest
   if ($LASTEXITCODE -ne 0) { throw "vrpathreg removedriver failed ($LASTEXITCODE)" }
   Write-Host 'driver unregistered.'
-  Write-Host "Now quit SteamVR so the driver is unloaded, then delete $Dest"
+  if ($steamvrRunning) {
+    Write-Host "Now quit SteamVR so the driver is unloaded, then delete $Dest"
+  } else {
+    Write-Host "Now delete $Dest"
+  }
 } catch {
   Write-Host "error: $_" -ForegroundColor Red
   $failed = $true

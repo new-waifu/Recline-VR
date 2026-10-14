@@ -58,18 +58,21 @@ try {
     foreach ($f in $files) { Copy-ToDest $f }
   }
 
+  # Checked before registering, which may start a short-lived vrserver.
+  $steamvrRunning = [bool](Get-Process -Name vrserver -ErrorAction SilentlyContinue)
   & $vrpathreg adddriver $Dest
   if ($LASTEXITCODE -ne 0) { throw "vrpathreg adddriver failed ($LASTEXITCODE)" }
   Write-Host "driver registered: $Dest"
 
-  $overlay = Join-Path $Dest 'bin\win64\recline_overlay.exe'
-  if (Get-Process -Name vrserver -ErrorAction SilentlyContinue) {
-    & $overlay --register
-    if ($LASTEXITCODE -ne 0) { throw "recline_overlay --register failed ($LASTEXITCODE)" }
+  # Works with SteamVR stopped too: a utility client gets a short-lived
+  # vrserver that loads no drivers, so nothing is left running or locked.
+  & (Join-Path $Dest 'bin\win64\recline_overlay.exe') --register
+  if ($LASTEXITCODE -ne 0) { throw "recline_overlay --register failed ($LASTEXITCODE)" }
+  if ($steamvrRunning) {
+    Write-Host 'Restart SteamVR to load the driver.'
   } else {
-    Write-Host "SteamVR is not running: start it and run '$overlay --register'"
+    Write-Host 'Done: Recline VR starts with SteamVR.'
   }
-  Write-Host 'Restart SteamVR to load the driver.'
 } catch {
   Write-Host "error: $_" -ForegroundColor Red
   $failed = $true
