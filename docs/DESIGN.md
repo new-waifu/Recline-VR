@@ -410,8 +410,10 @@ elsewhere:
 - the overlay's hint about PC-side calibration while streaming.
 
 The rest is generic. A Linux x86-64 build compiles and links, but hasn't been
-tested with a PC headset. A Windows build (MSVC, static CRT) compiles, links and
-passes the unit tests, but hasn't been run in SteamVR. Its shared memory is a
+tested with a PC headset. A Windows build (MSVC, static CRT) passes the unit
+tests and has run in SteamVR with the null headset driver: the driver loads and
+hooks, the overlay auto-launches and `reclinectl` reaches the driver, but it
+hasn't been tested with a real headset. Its shared memory is a
 session-local named mapping (`Local\recline_v1`), which disappears with its last
 user.
 
@@ -433,7 +435,12 @@ SteamVR fixes the driver's part: it loads `bin/<platform>/driver_<name>` and rea
 directory hold every platform, and the overlay manifest name each binary with its
 platform's key (`binary_path_linux_arm`, `binary_path_linux`,
 `binary_path_windows`), so it is a static file. The overlay finds the manifest and
-`resources/` two levels above its own executable. Its action manifest and bindings
+`resources/` two levels above its own executable, and passes their paths to
+SteamVR with the platform's own separators: SteamVR on Windows takes a manifest's
+directory from the last `\` only, so `...\recline-vr/recline_overlay.vrmanifest`
+gives the app the wrong working directory and SteamVR skips it. It also keeps a
+manifest path as first registered, so `--unregister` removes the path even when
+SteamVR has skipped the app. Its action manifest and bindings
 sit in `resources/overlay/` rather than `resources/input/`, which SteamVR uses for
 drivers' own input profiles.
 

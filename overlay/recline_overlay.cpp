@@ -92,31 +92,45 @@ int Register(const std::string& manifest) {
 int Unregister(const std::string& manifest) {
   if (!InitVR(vr::VRApplication_Utility)) return 1;
   auto* apps = vr::VRApplications();
-  if (!apps->IsApplicationInstalled(kAppKey)) {
-    printf("%s is not registered\n", kAppKey);
-    vr::VR_Shutdown();
-    return 0;
+  // The manifest can be registered while its app is not installed (SteamVR
+  // skipped it), so remove the path either way.
+  const bool installed = apps->IsApplicationInstalled(kAppKey);
+  if (installed) {
+    const vr::EVRApplicationError e = apps->SetApplicationAutoLaunch(kAppKey, false);
+    if (e != vr::VRApplicationError_None)
+      fprintf(stderr, "SetApplicationAutoLaunch(false): %s\n", AppErr(e));
   }
-  vr::EVRApplicationError e = apps->SetApplicationAutoLaunch(kAppKey, false);
-  if (e != vr::VRApplicationError_None)
-    fprintf(stderr, "SetApplicationAutoLaunch(false): %s\n", AppErr(e));
-  e = apps->RemoveApplicationManifest(manifest.c_str());
+  const vr::EVRApplicationError e = apps->RemoveApplicationManifest(manifest.c_str());
   int rc = 0;
-  if (e != vr::VRApplicationError_None) {
+  if (e == vr::VRApplicationError_None) {
+    printf("unregistered %s\n", kAppKey);
+  } else if (!installed) {
+    printf("%s is not registered\n", kAppKey);
+  } else {
     fprintf(stderr, "RemoveApplicationManifest(%s): %s\n", manifest.c_str(), AppErr(e));
     rc = 1;
-  } else {
-    printf("unregistered %s\n", kAppKey);
   }
   vr::VR_Shutdown();
   return rc;
+}
+
+// The install root holds the manifests and resources/; the binaries sit two
+// levels below it, in bin/<platform>/, where SteamVR requires the driver.
+std::filesystem::path InstallRoot() { return Utf8Path(ExecutableDir()).parent_path().parent_path(); }
+
+// `rel` (written with '/') under the install root, with the platform's own
+// separators: SteamVR on Windows splits paths at '\' only, so a mixed path
+// gives the overlay manifest the wrong directory.
+std::string InstallFile(const std::filesystem::path& root, const char* rel) {
+  const std::u8string s = (root / Utf8Path(rel)).make_preferred().u8string();
+  return std::string(s.begin(), s.end());
 }
 
 // ---------------------------------------------------------------------------
 
 class App {
  public:
-  explicit App(std::string root) : root_(std::move(root)), canvas_(kW, kH) {}
+  explicit App(std::filesystem::path root) : root_(std::move(root)), canvas_(kW, kH) {}
 
   int Run() {
     fprintf(stderr, "recline_overlay %s\n", RECLINE_VERSION);
@@ -170,7 +184,7 @@ class App {
 
   void SetupInput() {
     auto* in = vr::VRInput();
-    const std::string manifest = root_ + "/resources/overlay/actions.json";
+    const std::string manifest = InstallFile(root_, "resources/overlay/actions.json");
     vr::EVRInputError e = in->SetActionManifestPath(manifest.c_str());
     if (e != vr::VRInputError_None) {
       fprintf(stderr, "SetActionManifestPath(%s) failed: %d\n", manifest.c_str(), int(e));
@@ -751,13 +765,13 @@ class App {
 
   // Dashboard icon, rendered from packaging/resources/icon.svg.
   void SetThumbnail() {
-    const std::string icon = root_ + "/resources/icon.png";
+    const std::string icon = InstallFile(root_, "resources/icon.png");
     const vr::EVROverlayError e = vr::VROverlay()->SetOverlayFromFile(thumb_, icon.c_str());
     if (e != vr::VROverlayError_None)
       fprintf(stderr, "icon %s: %s\n", icon.c_str(), vr::VROverlay()->GetOverlayErrorNameFromEnum(e));
   }
 
-  std::string root_;  // install root (see InstallRoot)
+  std::filesystem::path root_;  // see InstallRoot
   Canvas canvas_;
   OverlayOptions opt_;
   vr::VROverlayHandle_t main_ = vr::k_ulOverlayHandleInvalid, thumb_ = vr::k_ulOverlayHandleInvalid;
@@ -813,18 +827,11 @@ void Usage() {
          "  --unregister   disable auto-launch and remove the manifest\n");
 }
 
-// The install root holds the manifests and resources/; the binaries sit two
-// levels below it, in bin/<platform>/, where SteamVR requires the driver.
-std::string InstallRoot() {
-  const std::u8string root = Utf8Path(ExecutableDir()).parent_path().parent_path().u8string();
-  return std::string(root.begin(), root.end());
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
-  const std::string root = InstallRoot();
-  const std::string manifest = root + "/recline_overlay.vrmanifest";
+  const std::filesystem::path root = InstallRoot();
+  const std::string manifest = InstallFile(root, "recline_overlay.vrmanifest");
   if (argc > 1) {
     const std::string a = argv[1];
     if (a == "--register") return Register(manifest);
