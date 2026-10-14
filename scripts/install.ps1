@@ -69,7 +69,7 @@ try {
   & (Join-Path $Dest 'bin\win64\reclinectl.exe') register
   if ($LASTEXITCODE -ne 0) { throw "reclinectl register failed ($LASTEXITCODE)" }
   if ($steamvrRunning) {
-    Write-Host 'Restart SteamVR to load the driver.'
+    Write-Host 'Restart SteamVR to load this version of Recline VR.'
   } else {
     Write-Host 'Done: Recline VR starts with SteamVR.'
   }

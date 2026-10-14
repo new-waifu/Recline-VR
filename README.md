@@ -37,8 +37,6 @@ explains how and why.
 - **Edit controller bindings** opens SteamVR's binding editor directly on this app.
 - **Show in dashboard** (on by default): untick it to remove the Recline icon from
   the SteamVR dashboard once the dashboard closes; the controller shortcuts keep
-  working. To open the panel again, bind *Show the Recline panel* (unbound by
-  default) or run `reclinectl panel show`.
   working. To open the panel again, use the *Show the Recline panel* shortcut
   (below) or run `reclinectl panel show`. If that shortcut is unbound, the panel
   warns first and hides on a second click.

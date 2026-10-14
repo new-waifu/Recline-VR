@@ -63,4 +63,4 @@ else
   echo "SteamVR is not running: start it and run '$DEST/bin/$PLATFORM/reclinectl register'"
 fi
 
-echo "Restart SteamVR to load the driver (on the Frame: steamvr restart)."
+echo "Restart SteamVR to load this version of Recline VR (on the Frame: steamvr restart)."
