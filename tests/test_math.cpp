@@ -147,6 +147,30 @@ static void TestRecenterPipeline() {
   }
 }
 
+// Drivers may leave a rotation all zero (SteamVR's null driver: qRotation),
+// meaning none. R's rotation must survive SteamVR's own product of the three
+// rotations, which only reads an all-zero result as no rotation.
+static void TestZeroDriverQuats() {
+  auto quat = [](const vr::HmdQuaternion_t& q) { return Quat{q.w, q.x, q.y, q.z}; };
+  const Rigid R{AxisAngle({1, 0, 0}, 0.5), {0, 0.5, 0}};
+  for (int zeros = 0; zeros < 8; ++zeros) {
+    vr::DriverPose_t d{};
+    d.qWorldFromDriverRotation = (zeros & 1) ? vr::HmdQuaternion_t{} : vr::HmdQuaternion_t{1, 0, 0, 0};
+    d.qRotation = (zeros & 2) ? vr::HmdQuaternion_t{} : vr::HmdQuaternion_t{1, 0, 0, 0};
+    d.qDriverFromHeadRotation = (zeros & 4) ? vr::HmdQuaternion_t{} : vr::HmdQuaternion_t{1, 0, 0, 0};
+    d.vecPosition[1] = 1.0;
+    d.poseIsValid = true;
+    CHECK(Near(HeadFromDriverPose(d), Rigid{Quat{}, {0, 1, 0}}), "zero quaternions read as identity");
+    vr::DriverPose_t p = d;
+    ApplyWorldTransform(R, &p);
+    const Quat steamvr = Normalize(quat(p.qWorldFromDriverRotation) * quat(p.qRotation) *
+                                   quat(p.qDriverFromHeadRotation));
+    CHECK(AngleBetween(steamvr, R.q) < 1e-9, "R's rotation survives zero quaternions (case %d)", zeros);
+    CHECK(Near(HeadFromDriverPose(p), Compose(R, HeadFromDriverPose(d)), 1e-9, 1e-7),
+          "R applied (case %d)", zeros);
+  }
+}
+
 // With a view axis below the head axis, the recentered *view* axis must be
 // level and forward (Full) or level (Level only).
 static void TestViewPitch() {
@@ -258,6 +282,7 @@ int main() {
   TestBasics();
   TestLevelOnly();
   TestRecenterPipeline();
+  TestZeroDriverQuats();
   TestViewPitch();
   TestViewTilt();
   TestAutoReset();

@@ -7,13 +7,19 @@
 
 namespace recline {
 
+// A driver quaternion. Some drivers leave a rotation all zero (SteamVR's null
+// driver: its device rotation, qRotation), which SteamVR takes as no rotation;
+// so does this.
+inline Quat DriverQuat(const vr::HmdQuaternion_t& q) {
+  const Quat r{q.w, q.x, q.y, q.z};
+  return Norm(r) > 1e-12 ? r : Quat{};
+}
+
 // Head pose in driver-world: world-from-driver ∘ driver-from-tracker ∘ head.
 inline Rigid HeadFromDriverPose(const vr::DriverPose_t& d) {
-  const Quat qw{d.qWorldFromDriverRotation.w, d.qWorldFromDriverRotation.x,
-                d.qWorldFromDriverRotation.y, d.qWorldFromDriverRotation.z};
-  const Quat qr{d.qRotation.w, d.qRotation.x, d.qRotation.y, d.qRotation.z};
-  const Quat qh{d.qDriverFromHeadRotation.w, d.qDriverFromHeadRotation.x,
-                d.qDriverFromHeadRotation.y, d.qDriverFromHeadRotation.z};
+  const Quat qw = DriverQuat(d.qWorldFromDriverRotation);
+  const Quat qr = DriverQuat(d.qRotation);
+  const Quat qh = DriverQuat(d.qDriverFromHeadRotation);
   const Vec3 tw{d.vecWorldFromDriverTranslation[0], d.vecWorldFromDriverTranslation[1],
                 d.vecWorldFromDriverTranslation[2]};
   const Vec3 th{d.vecDriverFromHeadTranslation[0], d.vecDriverFromHeadTranslation[1],
@@ -38,8 +44,15 @@ inline Rigid HeadInDriverSpace(const vr::DriverPose_t& d) {
 // pose' = T ∘ pose. Touches only the world-from-driver fields: velocities,
 // accelerations and driver-from-head live in driver space and follow along.
 inline void ApplyWorldTransform(const Rigid& T, vr::DriverPose_t* p) {
-  const Quat qw{p->qWorldFromDriverRotation.w, p->qWorldFromDriverRotation.x,
-                p->qWorldFromDriverRotation.y, p->qWorldFromDriverRotation.z};
+  // SteamVR multiplies the world-from-driver, device and driver-from-head
+  // rotations itself, and only then reads an all-zero product as no rotation:
+  // a zero device or driver-from-head rotation would drop T's rotation. Write
+  // the identity they stand for.
+  for (vr::HmdQuaternion_t* q : {&p->qRotation, &p->qDriverFromHeadRotation}) {
+    const Quat d = DriverQuat(*q);
+    *q = {d.w, d.x, d.y, d.z};
+  }
+  const Quat qw = DriverQuat(p->qWorldFromDriverRotation);
   const Vec3 tw{p->vecWorldFromDriverTranslation[0], p->vecWorldFromDriverTranslation[1],
                 p->vecWorldFromDriverTranslation[2]};
   const Quat q = Normalize(T.q * qw);

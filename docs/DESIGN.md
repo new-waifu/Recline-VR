@@ -36,6 +36,12 @@ space and follow automatically. Because a constant world transform applies equal
 to render-time and display-time poses, it cancels in reprojection and doesn't cause
 swim.
 
+A driver may leave a rotation it doesn't use all zero; SteamVR's null driver
+sends its device rotation (`qRotation`) that way. vrserver multiplies the
+world-from-driver, device and driver-from-head rotations and only then reads an
+all-zero product as no rotation, so a zero factor would drop R's rotation while its
+translation still applied. The hook writes the identity such a zero stands for.
+
 Each driver gets its own host object from `GetGenericInterface`, but all host
 objects share one vtable inside vrserver, and drivers call through it on every
 pose update. Replacing the `TrackedDevicePoseUpdated` slot in that shared vtable
