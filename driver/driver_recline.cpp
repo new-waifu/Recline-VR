@@ -251,7 +251,7 @@ void PinSelf() {
 
 #ifdef RECLINE_FRAME
 // Absolute path to the XRService shim, which ships next to this driver .so
-// (.../recline/bin/linuxarm64/librecline_xrshim.so). Empty if undeterminable.
+// (.../bin/linuxarm64/librecline_xrshim.so). Empty if undeterminable.
 std::string ShimPath() {
   std::string p = ModulePathOf(reinterpret_cast<const void*>(&PoseHook));
   const size_t slash = p.rfind('/');

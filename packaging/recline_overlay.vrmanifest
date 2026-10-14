@@ -4,10 +4,12 @@
 		{
 			"app_key" : "user.recline.overlay",
 			"launch_type" : "binary",
-			"@VR_BINARY_PATH_KEY@" : "recline_overlay@CMAKE_EXECUTABLE_SUFFIX@",
+			"binary_path_linux_arm" : "bin/linuxarm64/recline_overlay",
+			"binary_path_linux" : "bin/linux64/recline_overlay",
+			"binary_path_windows" : "bin\\win64\\recline_overlay.exe",
 			"is_dashboard_overlay" : true,
-			"image_path" : "icon.png",
-			"action_manifest_path" : "actions.json",
+			"image_path" : "resources/icon.png",
+			"action_manifest_path" : "resources/overlay/actions.json",
 			"strings" : {
 				"en_us" : {
 					"name" : "Recline VR",

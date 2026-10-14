@@ -7,17 +7,16 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
+# VR_PLATFORM names the bin/ subdirectory, as SteamVR expects for drivers (and
+# as packaging/recline_overlay.vrmanifest lists for the overlay).
 if(WIN32)
   set(VR_PLATFORM win64)
-  set(VR_BINARY_PATH_KEY binary_path_windows)
   set(FRAME_DEFAULT OFF)
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
   set(VR_PLATFORM linuxarm64)
-  set(VR_BINARY_PATH_KEY binary_path_linux_arm)
   set(FRAME_DEFAULT ON)
 else()
   set(VR_PLATFORM linux64)
-  set(VR_BINARY_PATH_KEY binary_path_linux)
   set(FRAME_DEFAULT OFF)
 endif()
 
@@ -98,27 +97,33 @@ endif()
 
 find_package(Threads REQUIRED)
 
-# The overlay dlopen's libvulkan, so it needs only the headers. Without them it
-# falls back to SetOverlayRaw, which flickers on every update: required on the
-# Frame, optional elsewhere.
-if(RECLINE_FRAME)
-  find_package(Vulkan REQUIRED)
-else()
-  find_package(Vulkan)
+# The overlay dlopen's libvulkan, so it needs only the headers (FindVulkan would
+# also insist on the loader library). Without them it falls back to
+# SetOverlayRaw, which flickers on every update: required on the Frame and in CI,
+# optional elsewhere.
+option(RECLINE_REQUIRE_VULKAN "Fail without the Vulkan headers" ${RECLINE_FRAME})
+find_path(RECLINE_VULKAN_INCLUDE_DIR vulkan/vulkan.h HINTS ENV VULKAN_SDK PATH_SUFFIXES include)
+if(NOT RECLINE_VULKAN_INCLUDE_DIR AND RECLINE_REQUIRE_VULKAN)
+  message(FATAL_ERROR "Vulkan headers (vulkan/vulkan.h) not found; set VULKAN_SDK")
 endif()
 
 set(COMMON_INC ${CMAKE_CURRENT_SOURCE_DIR}/common ${OPENVR_INCLUDE_DIR})
 set(STAGE_DIR ${CMAKE_BINARY_DIR}/stage)
+# Where every binary goes. The generator expression keeps multi-config
+# generators (Visual Studio) from appending a per-config subdirectory.
+set(STAGE_BIN_DIR ${STAGE_DIR}/bin/${VR_PLATFORM}$<0:>)
 
 # --- version ------------------------------------------------------------------------
 # recline_version.h, from git on every build (see cmake/version.cmake); the
 # header is only rewritten, and its users rebuilt, when the version changes.
+# The same version goes into the stage's VERSION file.
 set(RECLINE_VERSION "" CACHE STRING "Version to embed instead of the one git describes")
 set(VERSION_DIR ${CMAKE_BINARY_DIR}/generated)
 add_custom_target(recline_version
   COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR} -DOUT=${VERSION_DIR}/recline_version.h
-          -DOVERRIDE=${RECLINE_VERSION} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.cmake
-  BYPRODUCTS ${VERSION_DIR}/recline_version.h
+          -DOUT_TEXT=${STAGE_DIR}/VERSION -DOVERRIDE=${RECLINE_VERSION}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.cmake
+  BYPRODUCTS ${VERSION_DIR}/recline_version.h ${STAGE_DIR}/VERSION
   VERBATIM)
 
 function(recline_uses_version target)
@@ -126,13 +131,13 @@ function(recline_uses_version target)
   target_include_directories(${target} PRIVATE ${VERSION_DIR})
 endfunction()
 
-# An app linking the openvr_api loader, staged at the top of the layout.
+# An app linking the openvr_api loader, staged next to the driver.
 function(recline_app target)
   add_executable(${target} ${ARGN})
   target_compile_options(${target} PRIVATE ${WARN})
   target_link_libraries(${target} PRIVATE recline_client ${OPENVR_API})
   target_link_options(${target} PRIVATE ${STATIC_RUNTIME})
-  set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${STAGE_DIR})
+  set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${STAGE_BIN_DIR})
   recline_uses_version(${target})
 endfunction()
 
@@ -145,20 +150,22 @@ add_subdirectory(overlay)
 add_subdirectory(cli)
 
 # --- staging ----------------------------------------------------------------------
-# ${STAGE_DIR} is the complete install layout; on Linux its install.sh copies it
-# into place. The non-binary files are copied at configure time, so editing or
-# adding one re-runs configure on the next build.
-file(GLOB_RECURSE STAGED_FILES CONFIGURE_DEPENDS packaging/* scripts/*.sh)
+# ${STAGE_DIR} is the complete install layout, and also the driver's root (the
+# directory holding driver.vrdrivermanifest):
+#
+#   bin/<platform>/            driver, overlay, reclinectl (and the Frame's shim)
+#   resources/                 icon, driver settings, overlay input manifests
+#   driver.vrdrivermanifest, recline_overlay.vrmanifest, install and uninstall
+#
+# A build fills one bin/<platform>/; CI merges the three into one package. The
+# non-binary files are copied at configure time, so editing or adding one re-runs
+# configure on the next build.
+file(GLOB_RECURSE STAGED_FILES CONFIGURE_DEPENDS packaging/* scripts/*)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${STAGED_FILES} LICENSE THIRD_PARTY.md)
-configure_file(packaging/overlay/recline_overlay.vrmanifest.in
-               ${STAGE_DIR}/recline_overlay.vrmanifest @ONLY)
-file(COPY packaging/recline/ DESTINATION ${STAGE_DIR}/recline)
+file(COPY packaging/ DESTINATION ${STAGE_DIR} PATTERN "*.svg" EXCLUDE)
 file(COPY LICENSE THIRD_PARTY.md DESTINATION ${STAGE_DIR})
-file(COPY packaging/overlay/ DESTINATION ${STAGE_DIR}
-     PATTERN "*.in" EXCLUDE PATTERN "*.svg" EXCLUDE)
-if(NOT WIN32)
-  file(COPY scripts/install.sh scripts/uninstall.sh DESTINATION ${STAGE_DIR})
-endif()
+# Both installers: a package built on one platform may be merged with the others.
+file(COPY scripts/ DESTINATION ${STAGE_DIR})
 
 # --- host unit tests (no SteamVR needed) -------------------------------------------
 if(RECLINE_BUILD_TESTS)

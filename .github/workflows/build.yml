@@ -1,0 +1,118 @@
+# Builds every platform, merges them into one package (recline-vr-<version>.zip,
+# plus its debug info), and on a v* tag drafts a GitHub release with both.
+#
+# Linux builds run in Steam Runtime SDK containers: sniper (glibc 2.31, what
+# Steam itself targets) for linux64, and steamrt4 for linuxarm64. steamrt4's
+# glibc (2.41) is newer than the Frame's (2.39), so max_glibc holds linuxarm64
+# to the Frame's. Images and actions are pinned; bump them deliberately.
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux64
+            runner: ubuntu-24.04
+            image: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:3.0.20261007.263965
+            max_glibc: '2.31'
+            cc: gcc-14  # sniper's default is GCC 10
+            cxx: g++-14
+          - platform: linuxarm64
+            runner: ubuntu-24.04-arm
+            image: registry.gitlab.steamos.cloud/steamrt/steamrt4/sdk/arm64:4.0.20261007.263973
+            max_glibc: '2.39'  # the Frame's
+            cc: gcc
+            cxx: g++
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # tags, for the version
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: tools/ci_linux.sh ${{ matrix.platform }} ${{ matrix.max_glibc }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist/*.tar
+          if-no-files-found: error
+
+  windows:
+    name: win64
+    runs-on: windows-2025
+    steps:
+      # The package is merged with the Linux builds, so text files must match.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      # Headers only: the overlay loads the Vulkan loader at run time.
+      - uses: humbletim/setup-vulkan-sdk@c25f41106918cde0bf347e6f201277392b3a9e9d  # v1.2.1
+        with:
+          vulkan-query-version: 1.4.309.0  # as in the Linux SDK images
+          vulkan-components: Vulkan-Headers
+          vulkan-use-cache: true
+      - run: cmake -S . -B build -A x64 -DRECLINE_REQUIRE_VULKAN=ON
+      - run: cmake --build build --config RelWithDebInfo
+      - run: ctest --test-dir build -C RelWithDebInfo --output-on-failure
+      - name: Archive
+        run: |
+          New-Item -ItemType Directory -Force dist, build/debug/bin/win64 | Out-Null
+          Move-Item build/stage/bin/win64/*.pdb build/debug/bin/win64/
+          tar -cf dist/stage-win64.tar -C build/stage .
+          tar -cf dist/debug-win64.tar -C build/debug .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: dist-win64
+          path: dist/*.tar
+          if-no-files-found: error
+
+  package:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - run: tools/merge_packages.sh dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: recline-vr
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: recline-vr
+          path: dist
+      # A draft: publishing it stays a manual step.
+      - run: gh release create "$GITHUB_REF_NAME" dist/*.zip --draft --verify-tag --title "$GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

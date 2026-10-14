@@ -66,7 +66,7 @@ produce.
 away or take the headset off, because SteamVR's boundary is only right without
 it. A short "Back to normal" in view tells you it happened.
 
-**Command line** (`~/.local/share/recline-vr/reclinectl`):
+**Command line** (`~/.local/share/recline-vr/bin/linuxarm64/reclinectl`):
 
     reclinectl status                      # driver loaded? hook? current rotation, conflicts
     reclinectl recenter [--level-only] [--keep-position] [--height M] [--no-seated-reset]
@@ -113,7 +113,7 @@ in `vrserver.txt`) comes from `git describe`: `v1.1.0` for a tagged commit,
 
 ## Settings
 
-Driver (`recline/resources/settings/default.vrsettings`, section `driver_recline`):
+Driver (`resources/settings/default.vrsettings`, section `driver_recline`):
 
 - `loadPriority` (100000): load before other drivers (including Space Calibrator)
   so their pose hooks wrap ours.

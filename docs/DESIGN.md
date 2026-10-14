@@ -410,16 +410,67 @@ elsewhere:
 - the overlay's hint about PC-side calibration while streaming.
 
 The rest is generic. A Linux x86-64 build compiles and links, but hasn't been
-tested with a PC headset. The overlay manifest's `binary_path` key is generated
-per platform (`binary_path_linux_arm`, `binary_path_linux` or
-`binary_path_windows`), and the install scripts find `vrpathreg` in
-`/opt/steamvr` or a Steam install (or take `$VRPATHREG`).
+tested with a PC headset. A Windows build (MSVC, static CRT) compiles, links and
+passes the unit tests, but hasn't been run in SteamVR. Its shared memory is a
+session-local named mapping (`Local\recline_v1`), which disappears with its last
+user.
 
-A Windows build (MSVC, static CRT) compiles, links and passes the unit tests,
-but hasn't been run in SteamVR, and has no install script: the driver would be
-registered with `vrpathreg.exe adddriver <stage>\recline` and the overlay with
-`recline_overlay.exe --register`. Its shared memory is a session-local named
-mapping (`Local\recline_v1`), which disappears with its last user.
+### Install layout
+
+The install directory is the driver's root, with every binary in
+`bin/<platform>/`:
+
+    bin/linuxarm64/   driver_recline.so, librecline_xrshim.so, recline_overlay, reclinectl
+    bin/linux64/      driver_recline.so, recline_overlay, reclinectl
+    bin/win64/        driver_recline.dll, recline_overlay.exe, reclinectl.exe
+    resources/        icon.png, settings/default.vrsettings, overlay/ (actions, bindings)
+    driver.vrdrivermanifest, recline_overlay.vrmanifest, VERSION, install and uninstall scripts,
+    LICENSE, THIRD_PARTY.md
+
+SteamVR fixes the driver's part: it loads `bin/<platform>/driver_<name>` and reads
+`resources/settings/default.vrsettings` under the directory registered with
+`vrpathreg`. Putting the overlay and `reclinectl` next to the driver lets one
+directory hold every platform, and the overlay manifest name each binary with its
+platform's key (`binary_path_linux_arm`, `binary_path_linux`,
+`binary_path_windows`), so it is a static file. The overlay finds the manifest and
+`resources/` two levels above its own executable. Its action manifest and bindings
+sit in `resources/overlay/` rather than `resources/input/`, which SteamVR uses for
+drivers' own input profiles.
+
+A build fills one `bin/<platform>/`; a release package has all three. The
+installers (`install.sh` on Linux, `install.cmd` wrapping `install.ps1` on
+Windows) copy only their own platform's binaries. Up to v1.2 the driver's root was
+a `recline/` subdirectory, with the overlay beside it; `install.sh` unregisters
+and removes that layout. On Windows a running SteamVR holds the driver DLL and the
+overlay open, and files in use can be renamed but not overwritten, so
+`install.ps1` moves a busy file aside and a later install removes it. Both
+installers find `vrpathreg` themselves: on Linux in `/opt/steamvr` or a Steam
+install (or `$VRPATHREG`), on Windows through the runtime path in
+`openvrpaths.vrpath`, as the OpenVR loader does.
+
+### Release builds
+
+`.github/workflows/build.yml` builds each platform, checks it, and merges the
+three into `recline-vr-<version>.zip` (and the debug info into
+`recline-vr-<version>-debug.zip`); a `v*` tag drafts a GitHub release with both.
+
+- The Linux builds run in Valve's Steam Runtime SDK containers: sniper (glibc
+  2.31, what Steam itself targets) for `linux64`, steamrt4 for `linuxarm64`.
+  steamrt4's glibc (2.41) is newer than the Frame's (2.39), so the arm64 binaries
+  are held to 2.39: `tools/check_binaries.sh` fails the build if a binary needs a
+  newer glibc than its platform's limit, or any shared library besides glibc's. libstdc++ and libgcc are linked statically, and Vulkan and the OpenVR
+  runtime are loaded at run time.
+- The overlay needs only the Vulkan headers, so it looks for `vulkan/vulkan.h`
+  itself rather than through FindVulkan, which also wants the loader library. CI
+  sets `RECLINE_REQUIRE_VULKAN`, so a missing header fails the build instead of
+  shipping the flickering `SetOverlayRaw` fallback.
+- `tools/ci_linux.sh` is the whole Linux job, so it runs the same way in a local
+  container (see its header).
+- Everything outside `bin/` comes from the same commit, so
+  `tools/merge_packages.sh` requires it to be identical across the three builds;
+  this also catches line-ending conversion on the Windows checkout.
+- GitHub's artifact archives drop Unix execute bits, so builds pass tarballs
+  between jobs and the package is a zip made with Info-ZIP, which keeps them.
 
 ## Known limitations
 

@@ -3,7 +3,11 @@
 #   v1.1.0              built from the commit tagged v1.1.0
 #   v1.1.0+3.14d0169    3 commits after v1.1.0, at commit 14d0169
 #   ...-dirty           with uncommitted changes
-# Inputs: SRC (source dir), OUT (header path), OVERRIDE (RECLINE_VERSION, wins).
+# Inputs: SRC (source dir), OUT (header path), OUT_TEXT (optional plain-text
+# copy: the stage's VERSION), OVERRIDE (RECLINE_VERSION, wins).
+
+# A script run with -P starts with old policy defaults; use the project's.
+cmake_minimum_required(VERSION 3.21)
 
 set(version "")
 if(OVERRIDE)
@@ -44,4 +48,11 @@ if(EXISTS "${OUT}")
 endif()
 if(NOT old STREQUAL content)  # unchanged: keep the timestamp, rebuild nothing
   file(WRITE "${OUT}" "${content}")
+endif()
+
+if(OUT_TEXT)
+  # LF everywhere (file(WRITE) writes CRLF on Windows): the release package
+  # merges every platform's stage, and they must match outside bin/. Like
+  # configure_file, it only rewrites the file when the content changes.
+  file(CONFIGURE OUTPUT "${OUT_TEXT}" CONTENT "@version@\n" @ONLY NEWLINE_STYLE UNIX)
 endif()

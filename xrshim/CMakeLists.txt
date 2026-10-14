@@ -8,4 +8,4 @@ target_link_options(recline_xrshim PRIVATE ${SHARED_LIB_LINK}
                     -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.map)
 target_link_libraries(recline_xrshim PRIVATE recline_shm recline_slot_patch)
 set_target_properties(recline_xrshim PROPERTIES
-  LIBRARY_OUTPUT_DIRECTORY ${STAGE_DIR}/recline/bin/${VR_PLATFORM})
+  LIBRARY_OUTPUT_DIRECTORY ${STAGE_BIN_DIR})

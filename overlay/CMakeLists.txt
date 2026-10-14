@@ -1,7 +1,7 @@
 # The dashboard overlay.
 recline_app(recline_overlay recline_overlay.cpp vk_texture.cpp)
-if(Vulkan_FOUND)
-  target_link_libraries(recline_overlay PRIVATE Vulkan::Headers)
+if(RECLINE_VULKAN_INCLUDE_DIR)
+  target_include_directories(recline_overlay SYSTEM PRIVATE ${RECLINE_VULKAN_INCLUDE_DIR})
   target_compile_definitions(recline_overlay PRIVATE RECLINE_HAVE_VULKAN)
 else()
   message(WARNING "Vulkan headers not found: the overlay will use SetOverlayRaw, which flickers")
