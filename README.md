@@ -16,8 +16,8 @@ explains how and why.
 |---|---|---|
 | `driver_recline.so` | `driver/` | SteamVR driver (adds no devices) that applies the recline rotation to every tracked device's pose. |
 | `librecline_xrshim.so` | `xrshim/` | Loaded into the Frame's `XRService` only (never into games); corrects the passthrough mesh and camera poses for the recline rotation. |
-| `recline_overlay` | `overlay/` | Dashboard panel, controller actions and haptics; `--register` / `--unregister` for SteamVR. |
-| `reclinectl` | `cli/` | Command-line client: status, recenter, reset, diagnostics. |
+| `recline_overlay` | `overlay/` | Dashboard panel, controller actions and haptics; started by SteamVR. |
+| `reclinectl` | `cli/` | Command-line client: status, recenter, reset, overlay registration, diagnostics. |
 | shared code | `common/` | `/recline_v1` shared-memory protocol, transform and recenter math. |
 
 ## Using it
@@ -75,6 +75,7 @@ it. A short "Back to normal" in view tells you it happened.
     reclinectl poses                       # device poses per tracking space + display geometry
     reclinectl bindings                    # open the binding editor in the headset
     reclinectl panel show|hide             # Recline icon in the SteamVR dashboard
+    reclinectl register | unregister       # start the overlay with SteamVR (the installers do this)
     reclinectl setting get|set|remove <section> <key> [value]  # SteamVR settings, for experiments
 
 ## Install / uninstall
@@ -135,6 +136,9 @@ The driver logs to `~/.local/share/Steam/logs/vrserver.txt` with prefix `[reclin
   and runs before recline, which is the right order for a calibrator.
   `conflict: … modified after our hook …`: something changes poses after recline;
   see docs/DESIGN.md.
+
+The overlay logs to `~/.local/share/recline-vr/overlay.log` (the previous one is
+kept as `overlay.previous.log`).
 
 If the overlay says the driver isn't loaded, check that SteamVR's safe mode hasn't
 disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driver.

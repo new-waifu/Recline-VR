@@ -66,8 +66,8 @@ try {
 
   # Works with SteamVR stopped too: a utility client gets a short-lived
   # vrserver that loads no drivers, so nothing is left running or locked.
-  & (Join-Path $Dest 'bin\win64\recline_overlay.exe') --register
-  if ($LASTEXITCODE -ne 0) { throw "recline_overlay --register failed ($LASTEXITCODE)" }
+  & (Join-Path $Dest 'bin\win64\reclinectl.exe') register
+  if ($LASTEXITCODE -ne 0) { throw "reclinectl register failed ($LASTEXITCODE)" }
   if ($steamvrRunning) {
     Write-Host 'Restart SteamVR to load the driver.'
   } else {

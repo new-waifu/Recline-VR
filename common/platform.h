@@ -28,6 +28,11 @@ int ProcessId();
 std::string ExecutableDir();
 // Per-user configuration directory ($XDG_CONFIG_HOME or ~/.config; %LOCALAPPDATA%).
 std::string UserConfigDir();
+// Per-user data directory, for logs ($XDG_DATA_HOME or ~/.local/share; %LOCALAPPDATA%).
+std::string UserDataDir();
+// Sets an environment variable of this process, where child modules (such as
+// the Vulkan loader) read it.
+void SetProcessEnv(const char* name, const char* value);
 
 // Path of the loaded module (.so / .dll) containing `addr`; empty if unknown.
 std::string ModulePathOf(const void* addr);

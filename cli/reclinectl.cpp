@@ -8,6 +8,7 @@
 //   reclinectl set <yaw> <pitch> <roll> <x> <y> <z>     (degrees, meters)
 //   reclinectl poses      (prints device poses per tracking universe, for testing)
 //   reclinectl panel show|hide
+//   reclinectl register | unregister   (the overlay, with SteamVR; used by the installers)
 
 #include <openvr.h>
 
@@ -16,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <thread>
 
@@ -37,6 +39,7 @@ void Usage() {
           "       reclinectl poses        (HMD/controller poses as apps see them)\n"
           "       reclinectl bindings     (open the controller binding editor in the headset)\n"
           "       reclinectl panel show|hide   (the overlay's icon in the SteamVR dashboard)\n"
+          "       reclinectl register | unregister   (start the overlay with SteamVR, or stop)\n"
           "       reclinectl setting get <section> <key>\n"
           "       reclinectl setting set <section> <key> <bool|int|float|string>\n"
           "       reclinectl setting remove <section> <key>\n"
@@ -370,7 +373,7 @@ int Bindings() {
     return 1;
   }
   const vr::EVRInputError ie = vr::VRInput()->OpenBindingUI(
-      "user.recline.overlay", vr::k_ulInvalidActionSetHandle, vr::k_ulInvalidInputValueHandle,
+      kOverlayAppKey, vr::k_ulInvalidActionSetHandle, vr::k_ulInvalidInputValueHandle,
       /*bShowOnDesktop=*/false);
   vr::VR_Shutdown();
   if (ie != vr::VRInputError_None) {
@@ -403,6 +406,81 @@ int Panel(int argc, char** argv) {
   return 0;
 }
 
+// --- overlay registration ------------------------------------------------------------
+// A utility client needs no running SteamVR: without one it gets a short-lived
+// vrserver that loads no drivers, so the installers can register with SteamVR
+// stopped.
+
+const char* AppErr(vr::EVRApplicationError e) {
+  return vr::VRApplications()->GetApplicationsErrorNameFromEnum(e);
+}
+
+bool InitUtility() {
+  vr::EVRInitError e = vr::VRInitError_None;
+  vr::VR_Init(&e, vr::VRApplication_Utility);
+  if (e != vr::VRInitError_None) {
+    fprintf(stderr, "error: VR_Init: %s\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
+    return false;
+  }
+  return true;
+}
+
+// Adds the overlay's manifest and turns on auto-launch.
+int Register() {
+  const std::string manifest = InstallFile("recline_overlay.vrmanifest");
+  std::error_code ec;
+  if (!std::filesystem::exists(Utf8Path(manifest), ec)) {
+    fprintf(stderr, "error: manifest not found: %s\n", manifest.c_str());
+    return 1;
+  }
+  if (!InitUtility()) return 1;
+  auto* apps = vr::VRApplications();
+  if (apps->IsApplicationInstalled(kOverlayAppKey))
+    printf("%s already registered; re-adding to pick up the current path\n", kOverlayAppKey);
+  vr::EVRApplicationError e = apps->AddApplicationManifest(manifest.c_str(), false);
+  if (e != vr::VRApplicationError_None) {
+    fprintf(stderr, "error: AddApplicationManifest(%s): %s\n", manifest.c_str(), AppErr(e));
+    vr::VR_Shutdown();
+    return 1;
+  }
+  e = apps->SetApplicationAutoLaunch(kOverlayAppKey, true);
+  if (e != vr::VRApplicationError_None) {
+    fprintf(stderr, "error: SetApplicationAutoLaunch: %s\n", AppErr(e));
+    vr::VR_Shutdown();
+    return 1;
+  }
+  printf("registered %s (%s), auto-launch on\n", kOverlayAppKey, manifest.c_str());
+  vr::VR_Shutdown();
+  return 0;
+}
+
+// Turns off auto-launch and removes the manifest. The manifest can be
+// registered while its app is not installed (SteamVR skipped it), so the path
+// is removed either way.
+int Unregister() {
+  const std::string manifest = InstallFile("recline_overlay.vrmanifest");
+  if (!InitUtility()) return 1;
+  auto* apps = vr::VRApplications();
+  const bool installed = apps->IsApplicationInstalled(kOverlayAppKey);
+  if (installed) {
+    const vr::EVRApplicationError e = apps->SetApplicationAutoLaunch(kOverlayAppKey, false);
+    if (e != vr::VRApplicationError_None)
+      fprintf(stderr, "warning: SetApplicationAutoLaunch(false): %s\n", AppErr(e));
+  }
+  const vr::EVRApplicationError e = apps->RemoveApplicationManifest(manifest.c_str());
+  int rc = 0;
+  if (e == vr::VRApplicationError_None) {
+    printf("unregistered %s\n", kOverlayAppKey);
+  } else if (!installed) {
+    printf("%s is not registered\n", kOverlayAppKey);
+  } else {
+    fprintf(stderr, "error: RemoveApplicationManifest(%s): %s\n", manifest.c_str(), AppErr(e));
+    rc = 1;
+  }
+  vr::VR_Shutdown();
+  return rc;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -420,6 +498,8 @@ int main(int argc, char** argv) {
   if (c == "bindings") return Bindings();
   if (c == "setting") return Setting(argc - 2, argv + 2);
   if (c == "panel") return Panel(argc - 2, argv + 2);
+  if (c == "register") return Register();
+  if (c == "unregister") return Unregister();
   Usage();
   return 2;
 }

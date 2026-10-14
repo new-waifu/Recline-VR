@@ -115,6 +115,15 @@ std::string UserConfigDir() {
   return local && *local ? ToUtf8(local) : ".";
 }
 
+std::string UserDataDir() { return UserConfigDir(); }
+
+void SetProcessEnv(const char* name, const char* value) {
+  // The process environment (GetEnvironmentVariable, as the Vulkan loader
+  // reads it) and this CRT's copy (getenv) are separate.
+  SetEnvironmentVariableA(name, value);
+  _putenv_s(name, value);
+}
+
 std::string ModulePathOf(const void* addr) {
   HMODULE m = ModuleOf(addr, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT);
   return m ? ToUtf8(ModuleFileName(m).c_str()) : std::string();

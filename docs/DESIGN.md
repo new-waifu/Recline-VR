@@ -274,6 +274,18 @@ non-Steam-app scan of XDG `.desktop` entries (visibility keys matched against
 `XDG_CURRENT_DESKTOP=gamescope`), shown only on the Frame. A desktop entry would
 add a file to manage and does nothing on other platforms, so it is not used for now.
 
+SteamVR starts the overlay without a terminal, so it logs to `overlay.log` in the
+user data directory (`~/.local/share/recline-vr`, `%LOCALAPPDATA%\recline-vr`)
+as well as stderr. The log is bounded like the XRService shim's: at startup a log
+over 64 KiB becomes `overlay.previous.log`, and one run writes at most 64 KiB.
+
+Steam turns on its Vulkan pipeline-recording layer (Fossilize) for what it
+starts, through `ENABLE_VK_LAYER_VALVE_steam_fossilize_1`, and SteamVR passes
+that on to the overlay together with SteamVR's own pipeline cache path. The
+overlay builds no pipelines, so the layer would only log and add an empty cache
+file to SteamVR's; the overlay sets the layer manifest's
+`DISABLE_VK_LAYER_VALVE_steam_fossilize_1` before loading Vulkan.
+
 ## Coexistence with other pose hooks
 
 Other tools (e.g. Space Calibrator-style calibrators) may hook the same slot.
@@ -434,13 +446,14 @@ SteamVR fixes the driver's part: it loads `bin/<platform>/driver_<name>` and rea
 `vrpathreg`. Putting the overlay and `reclinectl` next to the driver lets one
 directory hold every platform, and the overlay manifest name each binary with its
 platform's key (`binary_path_linux_arm`, `binary_path_linux`,
-`binary_path_windows`), so it is a static file. The overlay finds the manifest and
-`resources/` two levels above its own executable, and passes their paths to
-SteamVR with the platform's own separators: SteamVR on Windows takes a manifest's
-directory from the last `\` only, so `...\recline-vr/recline_overlay.vrmanifest`
-gives the app the wrong working directory and SteamVR skips it. It also keeps a
-manifest path as first registered, so `--unregister` removes the path even when
-SteamVR has skipped the app. Its action manifest and bindings
+`binary_path_windows`), so it is a static file. The overlay and `reclinectl`
+find the manifest and `resources/` two levels above their own executable, and
+pass those paths to SteamVR with the platform's own separators: SteamVR on
+Windows takes a manifest's directory from the last `\` only, so
+`...\recline-vr/recline_overlay.vrmanifest` gives the app the wrong working
+directory and SteamVR skips it. It also keeps a manifest path as first
+registered, so `reclinectl unregister` removes the path even when SteamVR has
+skipped the app. The overlay's action manifest and bindings
 sit in `resources/overlay/` rather than `resources/input/`, which SteamVR uses for
 drivers' own input profiles.
 
@@ -463,6 +476,13 @@ installing with it stopped is best: nothing is locked, and the driver and the
 overlay start with SteamVR's next start without a restart. The Linux installers
 still register only while SteamVR runs; the same should hold there, but it is
 untested on the Frame, where the system manages SteamVR.
+
+Registration lives in `reclinectl register` / `unregister` rather than in the
+overlay, because on Windows the overlay is a GUI-subsystem program: SteamVR
+starting a console program opens a console window. A GUI program has no output
+for an installer to show, and PowerShell doesn't wait for it, so the console
+program does the registering. The overlay logs to `overlay.log` in the user data
+directory instead (see Dashboard panel).
 
 ### Release builds
 

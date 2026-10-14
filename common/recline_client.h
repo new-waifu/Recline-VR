@@ -44,4 +44,14 @@ const char* SendResultText(SendResult r);
 SendResult SendCommand(ReclineShm* shm, uint32_t cmd, const Rigid* payload,
                        StateSnapshot* stateOut = nullptr, double timeoutSec = 0.5);
 
+// The overlay's SteamVR app key (packaging/recline_overlay.vrmanifest).
+constexpr const char* kOverlayAppKey = "user.recline.overlay";
+
+// `rel` (written with '/') under the install root, which holds the manifests
+// and resources/; the running binary sits two levels below it, in
+// bin/<platform>/, where SteamVR requires the driver. The result has the
+// platform's own separators: SteamVR on Windows splits paths at '\' only, so a
+// mixed path gives the overlay manifest the wrong directory.
+std::string InstallFile(const char* rel);
+
 }  // namespace recline

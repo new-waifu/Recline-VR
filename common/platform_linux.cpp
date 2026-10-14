@@ -87,6 +87,15 @@ std::string UserConfigDir() {
   return std::string(home ? home : ".") + "/.config";
 }
 
+std::string UserDataDir() {
+  const char* xdg = getenv("XDG_DATA_HOME");
+  if (xdg && *xdg) return xdg;
+  const char* home = getenv("HOME");
+  return std::string(home ? home : ".") + "/.local/share";
+}
+
+void SetProcessEnv(const char* name, const char* value) { setenv(name, value, 1); }
+
 std::string ModulePathOf(const void* addr) {
   Dl_info info{};
   if (!dladdr(addr, &info) || !info.dli_fname) return {};

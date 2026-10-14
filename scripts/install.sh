@@ -58,9 +58,9 @@ fi
 echo "driver registered: $DEST"
 
 if pgrep -x vrserver >/dev/null 2>&1; then
-  "$DEST/bin/$PLATFORM/recline_overlay" --register
+  "$DEST/bin/$PLATFORM/reclinectl" register
 else
-  echo "SteamVR is not running: start it and run '$DEST/bin/$PLATFORM/recline_overlay --register'"
+  echo "SteamVR is not running: start it and run '$DEST/bin/$PLATFORM/reclinectl register'"
 fi
 
 echo "Restart SteamVR to load the driver (on the Frame: steamvr restart)."

@@ -3,6 +3,9 @@
 #include <chrono>
 #include <thread>
 
+#include "overlay_options.h"
+#include "platform.h"
+
 namespace recline {
 
 bool GetHmdPose(vr::IVRSystem* sys, vr::ETrackingUniverseOrigin uni, Rigid* out) {
@@ -100,6 +103,12 @@ SendResult SendCommand(ReclineShm* shm, uint32_t cmd, const Rigid* payload,
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
   return SendResult::Timeout;
+}
+
+std::string InstallFile(const char* rel) {
+  const std::filesystem::path root = Utf8Path(ExecutableDir()).parent_path().parent_path();
+  const std::u8string s = (root / Utf8Path(rel)).make_preferred().u8string();
+  return std::string(s.begin(), s.end());
 }
 
 }  // namespace recline

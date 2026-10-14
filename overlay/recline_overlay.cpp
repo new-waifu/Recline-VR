@@ -1,9 +1,8 @@
 // recline_overlay: SteamVR dashboard overlay + global input actions that
 // drive driver_recline over /recline_v1.
 //
-//   recline_overlay               run as overlay (VRApplication_Overlay)
-//   recline_overlay --register    add manifest + enable auto-launch, then exit
-//   recline_overlay --unregister  disable auto-launch + remove manifest, then exit
+// SteamVR starts it (auto-launch, set up by `reclinectl register`); it takes no
+// arguments, and logs to overlay.log (see overlay_log.h).
 
 #include <openvr.h>
 
@@ -19,6 +18,7 @@
 
 #include "auto_reset.h"
 #include "canvas.h"
+#include "overlay_log.h"
 #include "overlay_options.h"
 #include "platform.h"
 #include "recline_client.h"
@@ -29,7 +29,6 @@ namespace {
 
 using namespace recline;
 
-constexpr const char* kAppKey = "user.recline.overlay";
 constexpr const char* kOverlayKey = "user.recline.overlay.dashboard";
 constexpr const char* kToastKey = "user.recline.overlay.toast";
 constexpr int kW = 1024, kH = 760;
@@ -47,93 +46,24 @@ const Color kGood{90, 200, 120, 255};
 const Color kWarn{255, 190, 70, 255};
 const Color kBad{255, 95, 95, 255};
 
-const char* AppErr(vr::EVRApplicationError e) {
-  return vr::VRApplications() ? vr::VRApplications()->GetApplicationsErrorNameFromEnum(e) : "?";
-}
-
 bool InitVR(vr::EVRApplicationType type) {
   vr::EVRInitError e = vr::VRInitError_None;
   vr::VR_Init(&e, type);
   if (e != vr::VRInitError_None) {
-    fprintf(stderr, "VR_Init failed: %s (is SteamVR running?)\n",
-            vr::VR_GetVRInitErrorAsEnglishDescription(e));
+    Log("VR_Init failed: %s (is SteamVR running?)", vr::VR_GetVRInitErrorAsEnglishDescription(e));
     return false;
   }
   return true;
-}
-
-int Register(const std::string& manifest) {
-  std::error_code ec;
-  if (!std::filesystem::exists(Utf8Path(manifest), ec)) {
-    fprintf(stderr, "manifest not found: %s\n", manifest.c_str());
-    return 1;
-  }
-  if (!InitVR(vr::VRApplication_Utility)) return 1;
-  auto* apps = vr::VRApplications();
-  if (apps->IsApplicationInstalled(kAppKey))
-    printf("%s already registered; re-adding to pick up the current path\n", kAppKey);
-  vr::EVRApplicationError e = apps->AddApplicationManifest(manifest.c_str(), false);
-  if (e != vr::VRApplicationError_None) {
-    fprintf(stderr, "AddApplicationManifest(%s): %s\n", manifest.c_str(), AppErr(e));
-    vr::VR_Shutdown();
-    return 1;
-  }
-  e = apps->SetApplicationAutoLaunch(kAppKey, true);
-  if (e != vr::VRApplicationError_None) {
-    fprintf(stderr, "SetApplicationAutoLaunch: %s\n", AppErr(e));
-    vr::VR_Shutdown();
-    return 1;
-  }
-  printf("registered %s (%s), auto-launch on\n", kAppKey, manifest.c_str());
-  vr::VR_Shutdown();
-  return 0;
-}
-
-int Unregister(const std::string& manifest) {
-  if (!InitVR(vr::VRApplication_Utility)) return 1;
-  auto* apps = vr::VRApplications();
-  // The manifest can be registered while its app is not installed (SteamVR
-  // skipped it), so remove the path either way.
-  const bool installed = apps->IsApplicationInstalled(kAppKey);
-  if (installed) {
-    const vr::EVRApplicationError e = apps->SetApplicationAutoLaunch(kAppKey, false);
-    if (e != vr::VRApplicationError_None)
-      fprintf(stderr, "SetApplicationAutoLaunch(false): %s\n", AppErr(e));
-  }
-  const vr::EVRApplicationError e = apps->RemoveApplicationManifest(manifest.c_str());
-  int rc = 0;
-  if (e == vr::VRApplicationError_None) {
-    printf("unregistered %s\n", kAppKey);
-  } else if (!installed) {
-    printf("%s is not registered\n", kAppKey);
-  } else {
-    fprintf(stderr, "RemoveApplicationManifest(%s): %s\n", manifest.c_str(), AppErr(e));
-    rc = 1;
-  }
-  vr::VR_Shutdown();
-  return rc;
-}
-
-// The install root holds the manifests and resources/; the binaries sit two
-// levels below it, in bin/<platform>/, where SteamVR requires the driver.
-std::filesystem::path InstallRoot() { return Utf8Path(ExecutableDir()).parent_path().parent_path(); }
-
-// `rel` (written with '/') under the install root, with the platform's own
-// separators: SteamVR on Windows splits paths at '\' only, so a mixed path
-// gives the overlay manifest the wrong directory.
-std::string InstallFile(const std::filesystem::path& root, const char* rel) {
-  const std::u8string s = (root / Utf8Path(rel)).make_preferred().u8string();
-  return std::string(s.begin(), s.end());
 }
 
 // ---------------------------------------------------------------------------
 
 class App {
  public:
-  explicit App(std::filesystem::path root) : root_(std::move(root)), canvas_(kW, kH) {}
+  App() : canvas_(kW, kH) {}
 
   int Run() {
-    fprintf(stderr, "recline_overlay %s\n", RECLINE_VERSION);
+    Log("recline_overlay %s", RECLINE_VERSION);
     if (!InitVR(vr::VRApplication_Overlay)) return 1;
     ReloadOptionsIfChanged();
     const char* flip = getenv("RECLINE_MOUSE_FLIP_Y");
@@ -144,11 +74,11 @@ class App {
       std::string err;
       vkOk_ = vk_.Init(kW, kH, &err);
       renderer_ = vkOk_ ? "Vulkan texture" : "SetOverlayRaw (" + err + ")";
-      fprintf(stderr, "renderer: %s\n", renderer_.c_str());
+      Log("renderer: %s", renderer_.c_str());
     }
 
     viewPitch_ = MeasureViewPitch(vr::VRSystem());
-    fprintf(stderr, "lens-centre view pitch: %.2f deg\n", Deg(viewPitch_));
+    Log("lens-centre view pitch: %.2f deg", Deg(viewPitch_));
     SetupInput();
     OpenShmIfNeeded();
     RefreshStatus();
@@ -184,10 +114,10 @@ class App {
 
   void SetupInput() {
     auto* in = vr::VRInput();
-    const std::string manifest = InstallFile(root_, "resources/overlay/actions.json");
+    const std::string manifest = InstallFile("resources/overlay/actions.json");
     vr::EVRInputError e = in->SetActionManifestPath(manifest.c_str());
     if (e != vr::VRInputError_None) {
-      fprintf(stderr, "SetActionManifestPath(%s) failed: %d\n", manifest.c_str(), int(e));
+      Log("SetActionManifestPath(%s) failed: %d", manifest.c_str(), int(e));
       return;
     }
     in->GetActionSetHandle("/actions/recline", &actionSet_);
@@ -220,7 +150,7 @@ class App {
     auto* ov = vr::VROverlay();
     const vr::EVROverlayError e = ov->CreateDashboardOverlay(kOverlayKey, "Recline", &main_, &thumb_);
     if (e != vr::VROverlayError_None) {
-      fprintf(stderr, "CreateDashboardOverlay: %s\n", ov->GetOverlayErrorNameFromEnum(e));
+      Log("CreateDashboardOverlay: %s", ov->GetOverlayErrorNameFromEnum(e));
       main_ = thumb_ = vr::k_ulOverlayHandleInvalid;
       return false;
     }
@@ -358,7 +288,7 @@ class App {
     message_ = m;
     messageColor_ = c;
     dirty_ = true;
-    fprintf(stderr, "%s\n", m.c_str());
+    Log("%s", m.c_str());
   }
 
   // An error for the status line; returns false for the caller to pass on.
@@ -458,7 +388,7 @@ class App {
     if (toast_ == vr::k_ulOverlayHandleInvalid) {
       const vr::EVROverlayError e = ov->CreateOverlay(kToastKey, "Recline", &toast_);
       if (e != vr::VROverlayError_None) {
-        fprintf(stderr, "toast CreateOverlay: %s\n", ov->GetOverlayErrorNameFromEnum(e));
+        Log("toast CreateOverlay: %s", ov->GetOverlayErrorNameFromEnum(e));
         toast_ = vr::k_ulOverlayHandleInvalid;
         return;
       }
@@ -519,7 +449,7 @@ class App {
   // SteamVR's own route to an overlay app's bindings is buried; open it directly.
   void OpenBindings() {
     const vr::EVRInputError e = vr::VRInput()->OpenBindingUI(
-        kAppKey, actionSet_, vr::k_ulInvalidInputValueHandle, /*bShowOnDesktop=*/false);
+        kOverlayAppKey, actionSet_, vr::k_ulInvalidInputValueHandle, /*bShowOnDesktop=*/false);
     if (e != vr::VRInputError_None)
       SetMessage("Could not open the binding UI (error " + std::to_string(int(e)) + ")", kBad);
     else
@@ -758,20 +688,19 @@ class App {
       if (vk_.Upload(main_, uploaded_.data(), &err)) return;
       vkOk_ = false;  // fall back for good
       renderer_ = "SetOverlayRaw (Vulkan upload failed: " + err + ")";
-      fprintf(stderr, "renderer: %s\n", renderer_.c_str());
+      Log("renderer: %s", renderer_.c_str());
     }
     vr::VROverlay()->SetOverlayRaw(main_, uploaded_.data(), kW, kH, 4);
   }
 
   // Dashboard icon, rendered from packaging/resources/icon.svg.
   void SetThumbnail() {
-    const std::string icon = InstallFile(root_, "resources/icon.png");
+    const std::string icon = InstallFile("resources/icon.png");
     const vr::EVROverlayError e = vr::VROverlay()->SetOverlayFromFile(thumb_, icon.c_str());
     if (e != vr::VROverlayError_None)
-      fprintf(stderr, "icon %s: %s\n", icon.c_str(), vr::VROverlay()->GetOverlayErrorNameFromEnum(e));
+      Log("icon %s: %s", icon.c_str(), vr::VROverlay()->GetOverlayErrorNameFromEnum(e));
   }
 
-  std::filesystem::path root_;  // see InstallRoot
   Canvas canvas_;
   OverlayOptions opt_;
   vr::VROverlayHandle_t main_ = vr::k_ulOverlayHandleInvalid, thumb_ = vr::k_ulOverlayHandleInvalid;
@@ -820,24 +749,18 @@ class App {
   Color messageColor_ = kText;
 };
 
-void Usage() {
-  printf("usage: recline_overlay [--register | --unregister]\n"
-         "  (no args)      run as SteamVR overlay (dashboard panel + input actions)\n"
-         "  --register     register manifest with SteamVR and enable auto-launch\n"
-         "  --unregister   disable auto-launch and remove the manifest\n");
-}
-
 }  // namespace
 
-int main(int argc, char** argv) {
-  const std::filesystem::path root = InstallRoot();
-  const std::string manifest = InstallFile(root, "recline_overlay.vrmanifest");
+int main(int argc, char**) {
+  LogOpen();
   if (argc > 1) {
-    const std::string a = argv[1];
-    if (a == "--register") return Register(manifest);
-    if (a == "--unregister") return Unregister(manifest);
-    Usage();
-    return a == "--help" || a == "-h" ? 0 : 2;
+    Log("recline_overlay takes no arguments; `reclinectl register` sets it up to start with SteamVR");
+    return 2;
   }
-  return App(root).Run();
+  // Steam enables its pipeline-recording layer (Fossilize) for what it starts,
+  // and SteamVR passes that on. The overlay builds no pipelines, so the layer
+  // would only add a cache file to SteamVR's and log noise; this is its
+  // manifest's disable_environment.
+  SetProcessEnv("DISABLE_VK_LAYER_VALVE_steam_fossilize_1", "1");
+  return App().Run();
 }

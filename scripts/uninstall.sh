@@ -12,13 +12,13 @@ if [ -z "${VRPATHREG:-}" ]; then
   VRPATHREG=/opt/steamvr/bin/linuxarm64/vrpathreg
   [ -x "$VRPATHREG" ] || VRPATHREG=$HOME/.steam/steam/steamapps/common/SteamVR/bin/vrpathreg.sh
 fi
-OVERLAY=$DEST/bin/$PLATFORM/recline_overlay
+RECLINECTL=$DEST/bin/$PLATFORM/reclinectl
 
 if pgrep -x vrserver >/dev/null 2>&1; then
-  "$OVERLAY" --unregister
+  "$RECLINECTL" unregister
 else
   echo "warning: SteamVR is not running; overlay manifest was not unregistered." >&2
-  echo "         Start SteamVR and run '$OVERLAY --unregister' first." >&2
+  echo "         Start SteamVR and run '$RECLINECTL unregister' first." >&2
   exit 1
 fi
 

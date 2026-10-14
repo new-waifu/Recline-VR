@@ -25,8 +25,8 @@ try {
   # Works with SteamVR stopped too (see install.ps1). Checked before
   # unregistering, which may start a short-lived vrserver.
   $steamvrRunning = [bool](Get-Process -Name vrserver -ErrorAction SilentlyContinue)
-  & (Join-Path $Dest 'bin\win64\recline_overlay.exe') --unregister
-  if ($LASTEXITCODE -ne 0) { throw "recline_overlay --unregister failed ($LASTEXITCODE)" }
+  & (Join-Path $Dest 'bin\win64\reclinectl.exe') unregister
+  if ($LASTEXITCODE -ne 0) { throw "reclinectl unregister failed ($LASTEXITCODE)" }
   & $vrpathreg removedriver $Dest
   if ($LASTEXITCODE -ne 0) { throw "vrpathreg removedriver failed ($LASTEXITCODE)" }
   Write-Host 'driver unregistered.'
