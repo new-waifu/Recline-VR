@@ -496,10 +496,16 @@ class App {
     return count;
   }
 
-  // "Show the Recline panel" is known to be unbound: the other shortcuts'
-  // bindings are loaded, but it has none.
+  // "Show the Recline panel" is known to be unbound: a controller is connected,
+  // so its bindings are loaded, but the action has none. (Recline and reset have
+  // no default binding, so their counts prove nothing.)
   bool ShowPanelUnbound() {
-    return BindingCount(actShow_) == 0 && (BindingCount(actRecenter_) > 0 || BindingCount(actReset_) > 0);
+    if (BindingCount(actShow_) > 0) return false;
+    auto* sys = vr::VRSystem();
+    for (uint32_t d = 0; d < vr::k_unMaxTrackedDeviceCount; ++d)
+      if (sys->GetTrackedDeviceClass(d) == vr::TrackedDeviceClass_Controller && sys->IsTrackedDeviceConnected(d))
+        return true;
+    return false;
   }
 
   // SteamVR's own route to an overlay app's bindings is buried; open it directly.

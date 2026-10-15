@@ -1,0 +1,58 @@
+{
+	"controller_type": "generic",
+	"description": "Recline VR defaults: hold both grips and click both sticks (trackpad where there is no stick) to show the panel. Recline and reset with SteamVR's own recenter.",
+	"name": "Recline VR defaults",
+	"bindings": {
+		"/actions/recline": {
+			"sources": [
+				{
+					"path": "/user/hand/left/input/grip",
+					"mode": "button",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/right/input/grip",
+					"mode": "button",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/left/input/trackpad",
+					"mode": "button",
+					"inputs": {},
+					"parameters": {}
+				},
+				{
+					"path": "/user/hand/right/input/trackpad",
+					"mode": "button",
+					"inputs": {},
+					"parameters": {}
+				}
+			],
+			"chords": [
+				{
+					"output": "/actions/recline/in/show_panel",
+					"inputs": [
+						[ "/user/hand/left/input/grip", "single" ],
+						[ "/user/hand/right/input/grip", "single" ],
+						[ "/user/hand/left/input/trackpad", "single" ],
+						[ "/user/hand/right/input/trackpad", "single" ]
+					]
+				}
+			],
+			"haptics": [
+				{
+					"output": "/actions/recline/out/haptic",
+					"path": "/user/hand/left/output/haptic"
+				},
+				{
+					"output": "/actions/recline/out/haptic",
+					"path": "/user/hand/right/output/haptic"
+				}
+			],
+			"poses": [],
+			"skeleton": []
+		}
+	}
+}

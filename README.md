@@ -3,10 +3,11 @@
 *Lie back and keep playing. Full pitch/roll recentering for SteamVR, built for the
 Steam Frame.*
 
-Use VR lying down or reclined. Press one button and the direction you are looking
-becomes level and forward in VR, at a chosen eye height. It works for native apps on
-the Frame (OpenVR and OpenXR, standing and seated), and every tracked device moves
-together, so your hands stay attached. Reset puts everything back.
+Use VR lying down or reclined. Lie back and use SteamVR's own recenter, and the
+direction you are looking becomes level and forward in VR, at a chosen eye height.
+It works for native apps on the Frame (OpenVR and OpenXR, standing and seated), and
+every tracked device moves together, so your hands stay attached. Recentering
+upright again puts everything back.
 
 SteamVR's own recenter can only turn you around (yaw), not tilt the world. Recline
 VR rotates the whole tracked world instead; [docs/DESIGN.md](docs/DESIGN.md)
@@ -24,8 +25,13 @@ explains how and why.
 
 **Dashboard panel ("Recline"):**
 
-- **Recline recenter** makes your current view level and forward. **Reset to normal**
-  undoes it.
+- **Recline on SteamVR's recenter when tilted over** (on by default): SteamVR's own
+  recenter (system button or menu) reclines you when your view is tilted more than
+  the set angle (35° by default, 20–75°; pitch and roll both count, so lying on your
+  back, side or front all work), and undoes the recline when you recenter sitting or
+  standing up. A brief "Reclined" or "Back to normal" in view says which happened.
+- **Recline recenter** makes your current view level and forward, at any angle.
+  **Reset to normal** undoes it.
 - **Rotation:** *Full* also turns you to face the play area's forward direction;
   *Level only* keeps the direction you're facing and just straightens the horizon
   (on your back, you end up facing your feet).
@@ -36,16 +42,10 @@ explains how and why.
   seated-space games, sims and many OpenXR titles centred on you.
 - **Edit controller bindings** opens SteamVR's binding editor directly on this app.
 - **Show in dashboard** (on by default): untick it to remove the Recline icon from
-  the SteamVR dashboard once the dashboard closes; the controller shortcuts keep
-  working. To open the panel again, use the *Show the Recline panel* shortcut
+  the SteamVR dashboard once the dashboard closes; SteamVR's recenter and the panel
+  shortcut keep working. To open the panel again, use the *Show the Recline panel* shortcut
   (below) or run `reclinectl panel show`. If that shortcut is unbound, the panel
   warns first and hides on a second click.
-- **Recline on SteamVR's recenter when tilted over** (off by default): SteamVR's own
-  recenter (system button or menu) then also reclines you when your view is tilted
-  more than the set angle (35° by default, 20–75°; pitch and roll both count, so
-  lying on your back, side or front all work), and undoes the recline when you
-  recenter sitting or standing up. A brief "Reclined" or "Back to normal" in view
-  says which happened. *Recline recenter* still works at any angle.
 - The status area shows whether the driver is loaded, the current rotation, and
   warnings (another tool hooking poses, boundary limitations).
 
@@ -53,12 +53,11 @@ explains how and why.
 14° below the headset's nominal forward axis; the offset is read from SteamVR, so
 other headsets work too.
 
-**Controller shortcuts** (default bindings, changeable via the button above). On the
-right controller, hold **grip + trigger + bumper** and press **Y** to recenter,
-**X** to reset, or **A** to show the panel. They are plain SteamVR chords that work
-while a game is running (but not while the dashboard is open).
-Defaults are deliberately finger-twisting combinations that normal gameplay won't
-produce.
+**Controller shortcut** (default binding, changeable via *Edit controller bindings*):
+hold both grips and click both sticks (trackpads if there are no sticks) to show
+the panel. It works while a game is running (but not while the dashboard is open).
+Recline and reset have no default shortcut, since SteamVR's own recenter does both;
+bind *Recline recenter* and *Reset to normal* there if you want dedicated ones.
 
 **Safety:** the recline is undone automatically when you sit up, get up, move
 away or take the headset off, because SteamVR's boundary is only right without

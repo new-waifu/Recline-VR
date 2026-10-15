@@ -18,8 +18,10 @@ struct OverlayOptions {
   bool showInDashboard = true;
   // React to SteamVR's own recenter: recline when the view is tilted more than
   // systemRecenterTilt (degrees, pitch and roll combined) from upright,
-  // otherwise undo any recline and keep SteamVR's behaviour. Off by default.
-  bool systemRecenter = false;
+  // otherwise undo any recline and keep SteamVR's behaviour. On by default:
+  // it is how users recline without a dedicated shortcut (only the panel has a
+  // default binding; see tools/gen_bindings.py).
+  bool systemRecenter = true;
   double systemRecenterTilt = 35;
 };
 

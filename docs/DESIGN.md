@@ -356,6 +356,18 @@ headset is worn and the condition has lasted 3 s (the driver may still be starti
 The panel is never shown on its own: hiding it was the user's choice.
 `overlay.log` records each change of the status line once.
 
+Only *Show the Recline panel* has a default binding: hold both grips and click both
+sticks (trackpads where there are none), the same chord on every controller type
+the overlay ships bindings for (`tools/gen_bindings.py` writes them). Recline and
+reset come from SteamVR's own recenter instead (*Recline on SteamVR's recenter*, on
+by default), which every headset has and which no game uses for anything else, so a
+default chord for them would only add a way to trigger them by accident. Users can
+still bind them. The chords follow what SteamVR's binding editor writes, learned on
+the Frame: sources in `button` mode and chord inputs `single`; a chord input its
+source's mode doesn't provide (`click` is the `trigger` mode's) makes SteamVR drop
+the whole chord ("Unbound input … for chord, ignoring chord"), and `held` and `long`
+fire at once inside a chord, so there is no long-press chord.
+
 The panel is laser-mouse only. The Frame's dashboard offers a gamepad mode for
 panels whose overlay sets flag bit 4 (a gap in the public `VROverlayFlags`): it
 gives the panel's process SteamVR Input focus, and a normal-priority action set
