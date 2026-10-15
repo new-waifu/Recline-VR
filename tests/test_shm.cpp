@@ -153,7 +153,10 @@ static void TestOpen() {
   snprintf(name, sizeof name, "/recline_test_%d", ProcessId());
   RemoveSharedMemory(name);
   std::string err;
-  ReclineShm* a = OpenShm(false, &err, name);
+  // Only the driver creates the segment.
+  CHECK(OpenShm(false, &err, name) == nullptr && err.find("no driver") != std::string::npos,
+        "client must not create: %s", err.c_str());
+  ReclineShm* a = OpenShm(true, &err, name);
   CHECK(a != nullptr, "create: %s", err.c_str());
   ReclineShm* b = OpenShm(false, &err, name);
   CHECK(b != nullptr && b != a, "open existing: %s", err.c_str());
@@ -162,12 +165,50 @@ static void TestOpen() {
     const uint32_t id = SubmitCmd(a->cmd, CMD_RESET, nullptr, nullptr);
     CmdSnapshot c;
     CHECK(ReadCmd(b->cmd, &c) && c.cmd_id == id && c.cmd == CMD_RESET, "cross-mapping");
-    St(a->version, 2u);
-    CHECK(OpenShm(false, &err, name) == nullptr, "version mismatch must refuse");
-    printf("version mismatch refused: %s\n", err.c_str());
-    // Uninitialized segment: clients refuse, the driver takes over.
-    St(a->magic, 0u);
-    St(a->version, 0u);
+    // Identity: absent until the driver writes it, then read back in full.
+    DriverIdentity ident;
+    CHECK(ReadIdentity(*b, &ident) && !ident.present && ident.layout == kVersion, "no identity yet");
+    DriverIdentity w;
+    w.pid = 1234;
+    w.module_size = 5678;
+    w.module_mtime = -9;
+    w.version = "v1.3.0+1.abcdef0";
+    w.module_path = std::string(2000, 'p');  // truncated to fit
+    WriteIdentity(a->identity, w);
+    CHECK(ReadIdentity(*b, &ident) && ident.present && ident.pid == 1234 && ident.module_size == 5678 &&
+              ident.module_mtime == -9 && ident.version == w.version && ident.module_path == std::string(1023, 'p'),
+          "identity round trip");
+
+    // Another layout: clients refuse, but learn who made it.
+    St(a->version, kVersion + 1);
+    DriverIdentity found;
+    CHECK(OpenShm(false, &err, name, &found) == nullptr, "layout mismatch must refuse");
+    CHECK(found.layout == kVersion + 1 && found.present && found.version == w.version, "found identity");
+    printf("layout mismatch refused: %s\n", err.c_str());
+#ifndef _WIN32
+    // The driver replaces it with a new segment; old mappings keep the old one.
+    ReclineShm* r = OpenShm(true, &err, name);
+    CHECK(r && r->version == kVersion && r != a, "driver replaces: %s", err.c_str());
+    CHECK(r && ReadIdentity(*r, &ident) && !ident.present, "replacement is fresh");
+    CHECK(Ld(a->version) == kVersion + 1, "old mapping untouched");
+    ReclineShm* c2 = OpenShm(false, &err, name);
+    CHECK(c2 && c2->version == kVersion, "clients open the replacement: %s", err.c_str());
+#else
+    // A mapping lives while open, so the driver can't replace it.
+    CHECK(OpenShm(true, &err, name) == nullptr, "driver refuses a mapping still in use");
+#endif
+  }
+  RemoveSharedMemory(name);
+
+  // Uninitialized segment: clients refuse, the driver takes over. A name of its
+  // own: on Windows the mappings above keep theirs alive.
+  snprintf(name, sizeof name, "/recline_test_u_%d", ProcessId());
+  RemoveSharedMemory(name);
+  ReclineShm* u = OpenShm(true, &err, name);
+  CHECK(u != nullptr, "create: %s", err.c_str());
+  if (u) {
+    St(u->magic, 0u);
+    St(u->version, 0u);
     CHECK(OpenShm(false, &err, name) == nullptr, "client must refuse uninitialized");
     ReclineShm* d = OpenShm(true, &err, name);
     CHECK(d && d->magic == kMagic && d->version == kVersion, "driver takeover: %s", err.c_str());

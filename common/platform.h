@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace recline {
@@ -12,17 +13,26 @@ namespace recline {
 // std::chrono::steady_clock uses.
 double MonotonicSeconds();
 
-// Maps the named shared-memory segment `size` bytes long, creating it if absent.
-// `*created` tells whether this call created it; a new segment is zero-filled.
-// An existing segment smaller than `size` is refused. Returns nullptr with `err`
-// set on failure.
-void* MapSharedMemory(const char* name, size_t size, bool* created, std::string* err);
+// Maps the named shared-memory segment `size` bytes long, creating it if absent
+// and `create` is set. `*created` tells whether this call created it; a new
+// segment is zero-filled. An existing segment smaller than `size` is refused.
+// Returns nullptr with `err` set on failure, and `*missing` (optional) set if
+// it failed only because the segment doesn't exist.
+void* MapSharedMemory(const char* name, size_t size, bool create, bool* created, std::string* err,
+                      bool* missing = nullptr);
 void UnmapSharedMemory(void* p, size_t size);
 // Deletes the name where segments outlive their users (POSIX shm); a no-op
 // where the last unmap frees it.
 void RemoveSharedMemory(const char* name);
 
 int ProcessId();
+// Whether a process with this id exists (it may be another process that
+// reused the id).
+bool ProcessAlive(int pid);
+
+// Size and modification time of a file, in a platform-specific unit: only for
+// comparing with another stamp of the same file. False if it can't be read.
+bool FileStamp(const std::string& path, int64_t* size, int64_t* mtime);
 
 // Directory of the running executable.
 std::string ExecutableDir();

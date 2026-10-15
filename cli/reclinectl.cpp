@@ -46,11 +46,39 @@ void Usage() {
           "       reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   (degrees, meters)\n");
 }
 
-ReclineShm* Open() {
-  std::string err;
-  ReclineShm* shm = OpenShm(/*takeOverUninitialized=*/false, &err);
-  if (!shm) fprintf(stderr, "error: %s\n", err.c_str());
-  return shm;
+// The driver, checked against this build as the overlay checks it (see
+// Diagnose): reclinectl acts on the same terms.
+struct Driver {
+  ReclineShm* shm = nullptr;
+  std::string openError;
+  DriverIdentity refused;
+  DriverStatus status;
+  Diagnosis diag;
+};
+
+// `settings`: SteamVR's, if connected; tells whether it disabled the driver.
+Driver Connect(vr::IVRSettings* settings) {
+  Driver d;
+  d.shm = OpenShm(/*driver=*/false, &d.openError, kShmName, &d.refused);
+  if (d.shm) d.status = QueryStatus(d.shm);
+  d.diag = Diagnose(d.shm, d.openError, d.refused, d.status, settings);
+  return d;
+}
+
+// Connects and requires `needed` trust; prints why not.
+bool ConnectFor(Trust needed, vr::IVRSettings* settings, Driver* d) {
+  *d = Connect(settings);
+  if (int(d->diag.trust) >= int(needed)) return true;
+  fprintf(stderr, "error: %s\n", d->diag.line.c_str());
+  return false;
+}
+
+const char* TrustText(Trust t) {
+  switch (t) {
+    case Trust::Full: return "yes";
+    case Trust::Cleanup: return "no, but resets still re-zero (restart SteamVR to finish an update)";
+    default: return "no (reset sends a bare reset only)";
+  }
 }
 
 void PrintR(const char* label, const double q[4], const double t[3]) {
@@ -65,23 +93,45 @@ int Version() {
   return 0;
 }
 
+// Exit status 0 only when recline is fully usable.
 int Status() {
   Version();
-  ReclineShm* shm = Open();
-  if (!shm) return 1;
+  vr::EVRInitError e = vr::VRInitError_None;
+  vr::VR_Init(&e, vr::VRApplication_Background);  // never starts SteamVR
+  const bool vrOk = e == vr::VRInitError_None;
+  Driver d;
+  d.shm = OpenShm(/*driver=*/false, &d.openError, kShmName, &d.refused);
   HmdSnapshot h0;
-  ReadHmd(shm->hmd, &h0);
-  const double t0 = MonotonicSeconds();
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  uint64_t prevCount = h0.pose_count;
-  DriverStatus st = QueryStatus(shm, &prevCount);
-  const double dt = MonotonicSeconds() - t0;
-  if (!st.shmOk) {
-    fprintf(stderr, "error: could not read a consistent snapshot\n");
-    return 1;
+  double dt = 0;
+  if (d.shm) {
+    ReadHmd(d.shm->hmd, &h0);
+    const double t0 = MonotonicSeconds();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    uint64_t prevCount = h0.pose_count;
+    d.status = QueryStatus(d.shm, &prevCount);
+    dt = MonotonicSeconds() - t0;
   }
+  d.diag = Diagnose(d.shm, d.openError, d.refused, d.status, vrOk ? vr::VRSettings() : nullptr);
+  if (vrOk) {
+    printf("status:          %s\n", d.diag.line.c_str());
+    const uint32_t pid = vr::VRApplications()->GetApplicationProcessId(kOverlayAppKey);
+    if (pid) printf("overlay:         running (pid %u)\n", pid);
+    else printf("overlay:         NOT running (reclinectl register, then restart SteamVR)\n");
+  } else {
+    printf("status:          SteamVR is not running (%s)\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
+  }
+  printf("may recline:     %s\n", TrustText(d.diag.trust));
+  const DriverIdentity& id = d.shm ? d.status.identity : d.refused;
+  if (id.layout) printf("shm:             %s layout v%u (this build: v%u)\n", kShmName, id.layout, kVersion);
+  else printf("shm:             %s\n", d.openError.c_str());
+  if (id.present) {
+    printf("driver:          %s, pid %u\n", id.version.c_str(), id.pid);
+    printf("driver file:     %s\n", id.module_path.c_str());
+  }
+  if (vrOk) vr::VR_Shutdown();
+  if (!d.shm || !d.status.shmOk) return 1;
+  const auto& st = d.status;
   const auto& s = st.state;
-  printf("shm:             %s v%u\n", kShmName, Ld(shm->version));
   printf("driver alive:    %s\n", st.driverAlive ? "yes" : "NO (pose_count not advancing)");
   printf("flags:           0x%x%s%s%s%s%s\n", s.flags,
          s.flags & FLAG_HOOK_INSTALLED ? " hook_installed" : "",
@@ -98,12 +148,10 @@ int Status() {
   }
   PrintR("R:              ", s.R_q, s.R_t);
   printf("last cmd ack:    %u (result %u)\n", s.cmd_ack, s.cmd_result);
-  return st.driverAlive ? 0 : 1;
+  return d.diag.trust == Trust::Full ? 0 : 1;
 }
 
-int Send(uint32_t cmd, const Rigid* payload) {
-  ReclineShm* shm = Open();
-  if (!shm) return 1;
+int Send(ReclineShm* shm, uint32_t cmd, const Rigid* payload) {
   StateSnapshot st;
   const SendResult r = SendCommand(shm, cmd, payload, &st);
   if (r != SendResult::Ok) {
@@ -111,6 +159,24 @@ int Send(uint32_t cmd, const Rigid* payload) {
     return 1;
   }
   PrintR("ok, R:", st.R_q, st.R_t);
+  return 0;
+}
+
+// After a reset: re-zero the seated universe, for a trusted driver only (as in
+// the overlay). `vrError`: why SteamVR is not connected, or null.
+int ResetSeatedZero(const Diagnosis& diag, const vr::EVRInitError* vrError) {
+  if (int(diag.trust) < int(Trust::Cleanup)) {
+    printf("seated zero pose left alone: %s\n", diag.line.c_str());
+    return 0;
+  }
+  if (vrError) {
+    fprintf(stderr, "warning: transform reset, but seated zero pose not reset: VR_Init: %s\n",
+            vr::VR_GetVRInitErrorAsEnglishDescription(*vrError));
+    return 1;
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));  // a couple of frames
+  vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
+  printf("seated zero pose reset\n");
   return 0;
 }
 
@@ -126,20 +192,18 @@ int Reset(int argc, char** argv) {
       return 2;
     }
   }
-  const int rc = Send(CMD_RESET, nullptr);
-  if (rc != 0 || !seatedReset) return rc;
   vr::EVRInitError e = vr::VRInitError_None;
   vr::VR_Init(&e, vr::VRApplication_Background);
-  if (e != vr::VRInitError_None) {
-    fprintf(stderr, "warning: transform reset, but seated zero pose not reset: VR_Init: %s\n",
-            vr::VR_GetVRInitErrorAsEnglishDescription(e));
-    return 1;
-  }
-  std::this_thread::sleep_for(std::chrono::milliseconds(30));  // a couple of frames
-  vr::VRChaperone()->ResetZeroPose(vr::TrackingUniverseSeated);
-  printf("seated zero pose reset\n");
-  vr::VR_Shutdown();
-  return 0;
+  const bool vrOk = e == vr::VRInitError_None;
+  // Any driver whose segment we can open gets the bare reset; the zero pose
+  // only for one we trust, as in the overlay.
+  Driver d = Connect(vrOk ? vr::VRSettings() : nullptr);
+  int rc = 1;
+  if (!d.shm) fprintf(stderr, "error: %s\n", d.diag.line.c_str());
+  else rc = Send(d.shm, CMD_RESET, nullptr);
+  if (rc == 0 && seatedReset) rc = ResetSeatedZero(d.diag, vrOk ? nullptr : &e);
+  if (vrOk) vr::VR_Shutdown();
+  return rc;
 }
 
 int Recenter(int argc, char** argv) {
@@ -163,14 +227,18 @@ int Recenter(int argc, char** argv) {
       return 2;
     }
   }
-  ReclineShm* shm = Open();
-  if (!shm) return 1;
   vr::EVRInitError e = vr::VRInitError_None;
   vr::VR_Init(&e, vr::VRApplication_Background);
   if (e != vr::VRInitError_None) {
     fprintf(stderr, "error: VR_Init: %s\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
     return 1;
   }
+  Driver d;
+  if (!ConnectFor(Trust::Full, vr::VRSettings(), &d)) {
+    vr::VR_Shutdown();
+    return 1;
+  }
+  ReclineShm* shm = d.shm;
   if (!headAxis) {
     o.viewPitch = MeasureViewPitch(vr::VRSystem());
     printf("levelling the lens-centre view axis (%.1f deg from head axis)\n", Deg(o.viewPitch));
@@ -215,7 +283,9 @@ int Set(int argc, char** argv) {
     }
   }
   Rigid R{FromYawPitchRoll(Rad(v[0]), Rad(v[1]), Rad(v[2])), {v[3], v[4], v[5]}};
-  return Send(CMD_SET, &R);
+  Driver d;
+  if (!ConnectFor(Trust::Full, nullptr, &d)) return 1;
+  return Send(d.shm, CMD_SET, &R);
 }
 
 int Poses() {

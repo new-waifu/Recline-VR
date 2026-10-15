@@ -66,7 +66,7 @@ it. A short "Back to normal" in view tells you it happened.
 
 **Command line** (`~/.local/share/recline-vr/bin/linuxarm64/reclinectl`):
 
-    reclinectl status                      # driver loaded? hook? current rotation, conflicts
+    reclinectl status                      # driver loaded and matching? hook? rotation, conflicts
     reclinectl recenter [--level-only] [--keep-position] [--height M] [--no-seated-reset]
     reclinectl reset [--no-seated-reset]
     reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   # explicit rotation (deg, m), testing

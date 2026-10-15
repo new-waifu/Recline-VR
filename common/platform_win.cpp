@@ -64,16 +64,21 @@ double MonotonicSeconds() {
   return double(c.QuadPart) * period;
 }
 
-void* MapSharedMemory(const char* name, size_t size, bool* created, std::string* err) {
+void* MapSharedMemory(const char* name, size_t size, bool create, bool* created, std::string* err,
+                      bool* missing) {
   // Session-local namespace; POSIX-style names start with '/'.
   const std::string kname = std::string("Local\\") + (name[0] == '/' ? name + 1 : name);
-  HANDLE h = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, DWORD(size),
-                                kname.c_str());
+  *created = false;
+  if (missing) *missing = false;
+  HANDLE h = create ? CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, DWORD(size),
+                                         kname.c_str())
+                    : OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, kname.c_str());
   if (!h) {
-    *err = LastErrorText("CreateFileMapping");
+    if (missing) *missing = !create && GetLastError() == ERROR_FILE_NOT_FOUND;
+    *err = LastErrorText(create ? "CreateFileMapping" : "OpenFileMapping");
     return nullptr;
   }
-  *created = GetLastError() != ERROR_ALREADY_EXISTS;  // a new mapping is zero-filled
+  *created = create && GetLastError() != ERROR_ALREADY_EXISTS;  // a new mapping is zero-filled
   void* p = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, size);
   if (!p) {
     *err = LastErrorText("MapViewOfFile");
@@ -104,6 +109,27 @@ void UnmapSharedMemory(void* p, size_t) {
 void RemoveSharedMemory(const char*) {}
 
 int ProcessId() { return int(GetCurrentProcessId()); }
+
+bool ProcessAlive(int pid) {
+  HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(pid));
+  if (!h) return GetLastError() == ERROR_ACCESS_DENIED;  // exists, but not ours to query
+  DWORD code = 0;
+  const bool alive = GetExitCodeProcess(h, &code) && code == STILL_ACTIVE;
+  CloseHandle(h);
+  return alive;
+}
+
+bool FileStamp(const std::string& path, int64_t* size, int64_t* mtime) {
+  const int n = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
+  if (n <= 0) return false;
+  std::wstring w(size_t(n), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, w.data(), n);
+  WIN32_FILE_ATTRIBUTE_DATA a{};
+  if (!GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &a)) return false;
+  *size = (int64_t(a.nFileSizeHigh) << 32) | a.nFileSizeLow;
+  *mtime = (int64_t(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
+  return true;
+}
 
 std::string ExecutableDir() {
   const std::wstring path = ModuleFileName(nullptr);

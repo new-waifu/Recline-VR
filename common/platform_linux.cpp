@@ -8,6 +8,7 @@
 #include <thread>
 
 #include <dlfcn.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <sys/mman.h>
@@ -22,9 +23,11 @@ double MonotonicSeconds() {
   return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
 }
 
-void* MapSharedMemory(const char* name, size_t size, bool* created, std::string* err) {
+void* MapSharedMemory(const char* name, size_t size, bool create, bool* created, std::string* err,
+                      bool* missing) {
   *created = false;
-  int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
+  if (missing) *missing = false;
+  int fd = create ? shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600) : -1;
   if (fd >= 0) {
     *created = true;
     if (ftruncate(fd, off_t(size)) != 0) {  // zero-fills
@@ -33,9 +36,10 @@ void* MapSharedMemory(const char* name, size_t size, bool* created, std::string*
       shm_unlink(name);
       return nullptr;
     }
-  } else if (errno == EEXIST) {
+  } else if (!create || errno == EEXIST) {
     fd = shm_open(name, O_RDWR, 0600);
     if (fd < 0) {
+      if (missing) *missing = errno == ENOENT;
       *err = std::string("shm_open existing: ") + strerror(errno);
       return nullptr;
     }
@@ -69,6 +73,16 @@ void UnmapSharedMemory(void* p, size_t size) { munmap(p, size); }
 void RemoveSharedMemory(const char* name) { shm_unlink(name); }
 
 int ProcessId() { return int(getpid()); }
+
+bool ProcessAlive(int pid) { return pid > 0 && (kill(pid, 0) == 0 || errno == EPERM); }
+
+bool FileStamp(const std::string& path, int64_t* size, int64_t* mtime) {
+  struct stat st {};
+  if (stat(path.c_str(), &st) != 0) return false;
+  *size = int64_t(st.st_size);
+  *mtime = int64_t(st.st_mtim.tv_sec) * 1000000000 + st.st_mtim.tv_nsec;
+  return true;
+}
 
 std::string ExecutableDir() {
   char buf[PATH_MAX];

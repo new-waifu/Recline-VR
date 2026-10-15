@@ -249,6 +249,19 @@ void PinSelf() {
     Log("pinned %s", ModulePathOf(self).c_str());
 }
 
+// What clients compare with themselves before they act on our state
+// (docs/DESIGN.md, "Driver identity").
+DriverIdentity OwnIdentity() {
+  DriverIdentity id;
+  id.layout = kVersion;
+  id.pid = uint32_t(ProcessId());
+  id.version = RECLINE_VERSION;
+  id.module_path = ModulePathOf(reinterpret_cast<const void*>(&PoseHook));
+  if (!FileStamp(id.module_path, &id.module_size, &id.module_mtime))
+    Log("warning: could not read %s", id.module_path.c_str());
+  return id;
+}
+
 #ifdef RECLINE_FRAME
 // Absolute path to the XRService shim, which ships next to this driver .so
 // (.../bin/linuxarm64/librecline_xrshim.so). Empty if undeterminable.
@@ -282,9 +295,10 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     if (debugPitchDeg_ != 0) Log("debugPitchDeg=%.2f", debugPitchDeg_);
 
     std::string err;
-    ReclineShm* shm = OpenShm(/*takeOverUninitialized=*/true, &err);
+    ReclineShm* shm = OpenShm(/*driver=*/true, &err);
     if (!shm) Log("error: shared memory unavailable (%s); commands disabled", err.c_str());
     if (shm) {
+      WriteIdentity(shm->identity, OwnIdentity());
       // Ignore commands written before this driver instance started: no
       // transform survives a restart, and the segment outlives vrserver.
       CmdSnapshot c;

@@ -178,7 +178,7 @@ friends/achievements style, which is easy to miss for a change of view.
 
 `driver_recline` (inside vrserver) and its clients (`recline_overlay`, `reclinectl`)
 talk over a 4 KiB POSIX shared-memory segment. It has three blocks, each on its own
-64-byte cache line:
+64-byte cache line, and an identity block (see Driver identity):
 
 - `CmdBlock`: commands (`RECENTER` with `Traw`, `RESET`, `SET` with an explicit R).
   Several clients may write.
@@ -205,14 +205,82 @@ atomics don't work across processes.
   losing races on one copy can always read the other. (A thread-local "last good R"
   would be the textbook fallback, but thread-locals in a `dlopen`ed module can
   allocate on first use per thread.)
-- **Initialization:** the creator uses `O_CREAT|O_EXCL`, sizes the segment, writes
-  the version and then publishes a magic value with release ordering. Openers wait
-  briefly for the magic and refuse a version mismatch. The driver takes over a
-  segment whose creator died before publishing the magic. The segment is never
-  unlinked while in use; it lives in `/dev/shm` and is cleared on reboot.
+- **Initialization:** only the driver creates the segment, so a missing one means
+  no driver started. It uses `O_CREAT|O_EXCL`, sizes the segment, writes the layout
+  version and then publishes a magic value with release ordering. Openers wait
+  briefly for the magic and refuse another layout version. The driver
+  takes over a segment whose creator died before publishing the magic, and replaces
+  one with another layout version: in `/dev/shm` a segment outlives SteamVR until
+  reboot, so after an update the previous version's is still there. It unlinks the
+  name and creates a new segment; a client that still maps the old one keeps it and
+  sees a driver that no longer runs. On Windows a named mapping goes away with its
+  last user, so there is nothing left over, and one still in use is refused.
 - **Handshake:** the client writes a command and remembers its id. The driver's
   ~100 Hz command thread applies it, updating its in-process R first and then the
   state block. The client polls for the matching acknowledgement (500 ms timeout).
+
+## Driver identity
+
+The overlay and `reclinectl` must know whether the driver they talk to is their own
+build, also when its layout differs from theirs. So part of the segment is frozen:
+its name (`/recline_v1`), its size, the magic and layout version at offsets 0 and 4,
+and an `IdentityBlock` at offset 2048. A layout change moves anything else, never
+these. The driver writes the block once at startup: its version (`RECLINE_VERSION`),
+the path it was loaded from, that file's size and modification time, and vrserver's
+process id.
+
+Segments start zero-filled and no version before 1.3 wrote past byte 448, so a
+segment of an older driver reads as "no identity". 1.3 still raised the layout
+version to 2: older overlays and `reclinectl`, which can't check an identity, then
+refuse a 1.3 driver instead of using it unchecked.
+
+A client compares the identity with itself, in this order:
+
+- **Left over:** vrserver's process id is gone and no poses arrive: the segment is
+  from an earlier session (Linux), and no driver runs.
+- **Another build:** another layout version, or another version string: the
+  driver's or the client's install changed while SteamVR ran, or a second install
+  is registered. "Restart SteamVR".
+- **Not running:** no segment, or no identity in it. SteamVR's settings say why when
+  they can: safe mode (`blocked_by_safe_mode`), or the add-on turned off (`enable`).
+  Otherwise SteamVR failed to load it or was started before the install: "restart
+  SteamVR; if that doesn't help, see vrserver.txt".
+- **Another install:** the driver's directory is not the client's own `bin/<platform>/`.
+  Same version or not, the two installs would go out of step at the next update.
+- **Updated:** the running driver and the client match, but the driver's file
+  changed since it was loaded, or the install's `VERSION` is no longer the
+  client's.
+
+The comparison is exact rather than "compatible": whether two builds would work
+together is a guess, while a mismatch only arises from an update or a second
+install, and a restart, or removing one install, fixes it. The size and time of the
+file catch rebuilds that keep the version string (such as `-dirty` development
+builds) without a build id that would rebuild everything on each build.
+
+## Acting on the driver's state
+
+The driver's state reaches the overlay's actions in three places: the automatic
+reset counter (re-zero the seated pose, and the standing pose if it was zeroed
+while reclined), the active flag and head pose (answer SteamVR's recenter: recline
+or reset, then re-zero both poses), and the headset's device index (whose worn
+events time both). Zero poses persist in SteamVR's chaperone beyond the session, so
+a misread state does lasting harm: a driver of another build may publish the same
+layout with another meaning. Every one of those places asks one gate in the overlay
+(`Trusted()`, whose comment repeats this rule) for one of three levels:
+
+- **Full** (the identity matches, the install is unchanged, poses arrive): everything.
+- **Cleanup** (this build's pair, but newer files are installed): no new recline and
+  no answering SteamVR's recenter, but resets, including the automatic one, re-zero
+  as usual. Refusing those too would strand a standing pose zeroed while reclined.
+- **None** (any other driver, or none): its state is shown, never acted on. Recenter
+  is refused. Reset sends a bare `CMD_RESET` without zero poses, which needs nothing
+  but an open segment of this layout. The driver's own automatic reset (moved away,
+  headset off) still undoes a recline without the overlay.
+
+There is no override. `reclinectl` applies the same levels: `recenter` and `set` need
+Full, `reset` re-zeroes the seated pose from Cleanup on, and `status` exits non-zero
+below Full. Third-party conditions (another hook wrapping ours, a downstream
+conflict) are warnings, not failures: Recline can't fix them by restarting.
 
 ## Lifecycle
 
@@ -252,7 +320,8 @@ in the command thread, so this doesn't depend on the overlay running:
 The overlay sees the reset counter change. It says why ("Back to normal: you
 moved" / "headset was off") with a toast and a haptic pulse, once the headset is
 worn again, and re-zeroes the seated pose (and the standing pose, if it was last
-zeroed while reclined) in front of the user.
+zeroed while reclined) in front of the user; it re-zeroes only for a driver it trusts
+(see Acting on the driver's state).
 
 ## Dashboard panel
 
@@ -264,6 +333,15 @@ The panel is never destroyed while on screen (the dashboard is open, or the pane
 was detached from it into a game), so hiding it does not pull it out from under
 the pointer. `reclinectl panel show|hide` edits `overlay.conf`; the overlay
 reloads the file when its modification time changes.
+
+With the panel hidden, and for a shortcut used in a game, the panel's status line
+is out of sight, so problems also show as a toast. A refused or failed shortcut
+always says why, briefly, with no haptic pulse (a pulse means it worked). A problem
+the user must act on (restart SteamVR, driver not loaded, two installs) shows once
+per condition while the overlay runs, and only while the panel is hidden, once the
+headset is worn and the condition has lasted 3 s (the driver may still be starting).
+The panel is never shown on its own: hiding it was the user's choice.
+`overlay.log` records each change of the status line once.
 
 The panel is laser-mouse only. The Frame's dashboard offers a gamepad mode for
 panels whose overlay sets flag bit 4 (a gap in the public `VROverlayFlags`): it

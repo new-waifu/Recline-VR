@@ -2,6 +2,7 @@
 // command submit, segment open/create). See recline_shm.h.
 #include "recline_shm.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <thread>
@@ -48,6 +49,60 @@ void WriteState(StateBlock& b, const StateSnapshot& v) {
   SeqWriteEnd(b.seq, s);
 }
 
+bool ReadIdentity(const ReclineShm& shm, DriverIdentity* o) {
+  const IdentityBlock& b = shm.identity;
+  uint32_t magic = 0, pid = 0;
+  int64_t size = 0, mtime = 0;
+  char version[sizeof b.version], path[sizeof b.module_path];
+  const bool ok = SeqRead(b.seq, [&] {
+    magic = Ld(b.magic);
+    pid = Ld(b.pid);
+    size = Ld(b.module_size);
+    mtime = Ld(b.module_mtime);
+    for (size_t i = 0; i < sizeof version; ++i) version[i] = Ld(b.version[i]);
+    for (size_t i = 0; i < sizeof path; ++i) path[i] = Ld(b.module_path[i]);
+  }, 1000);
+  if (!ok) return false;
+  version[sizeof version - 1] = path[sizeof path - 1] = 0;
+  *o = DriverIdentity{};
+  o->layout = Ld(shm.version);
+  o->present = magic == kIdentityMagic;
+  if (!o->present) return true;
+  o->pid = pid;
+  o->module_size = size;
+  o->module_mtime = mtime;
+  o->version = version;
+  o->module_path = path;
+  return true;
+}
+
+namespace {
+
+template <size_t N>
+void StoreString(char (&dst)[N], const std::string& s) {
+  const size_t n = std::min(s.size(), N - 1);
+  for (size_t i = 0; i < N; ++i) St(dst[i], i < n ? s[i] : '\0');
+}
+
+// A new or taken-over segment: write the layout version, then publish the magic.
+void Initialize(ReclineShm* shm) {
+  St(shm->version, kVersion);
+  St(shm->magic, kMagic, std::memory_order_release);
+}
+
+}  // namespace
+
+void WriteIdentity(IdentityBlock& b, const DriverIdentity& v) {
+  const uint32_t s = SeqWriteBeginSingle(b.seq);
+  St(b.pid, v.pid);
+  St(b.module_size, v.module_size);
+  St(b.module_mtime, v.module_mtime);
+  StoreString(b.version, v.version);
+  StoreString(b.module_path, v.module_path);
+  St(b.magic, kIdentityMagic);
+  SeqWriteEnd(b.seq, s);
+}
+
 uint32_t SubmitCmd(CmdBlock& b, uint32_t cmd, const double q[4], const double t[3],
                    double timeoutSec) {
   const double deadline = MonotonicSeconds() + timeoutSec;
@@ -71,19 +126,18 @@ uint32_t SubmitCmd(CmdBlock& b, uint32_t cmd, const double q[4], const double t[
   return id;
 }
 
-ReclineShm* OpenShm(bool takeOverUninitialized, std::string* err, const char* name) {
-  bool created = false;
+ReclineShm* OpenShm(bool driver, std::string* err, const char* name, DriverIdentity* found) {
+  bool created = false, missing = false;
   std::string e;
-  void* p = MapSharedMemory(name, kShmSize, &created, &e);
+  void* p = MapSharedMemory(name, kShmSize, /*create=*/driver, &created, &e, &missing);
   if (!p) {
-    if (err) *err = e;
+    if (err) *err = missing ? std::string("no driver has created ") + name : e;
     return nullptr;
   }
   auto* shm = static_cast<ReclineShm*>(p);
 
   if (created) {  // zero-filled
-    St(shm->version, kVersion);
-    St(shm->magic, kMagic, std::memory_order_release);
+    Initialize(shm);
     return shm;
   }
 
@@ -94,26 +148,36 @@ ReclineShm* OpenShm(bool takeOverUninitialized, std::string* err, const char* na
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   if (magic != kMagic) {
-    if (magic == 0 && takeOverUninitialized) {
-      St(shm->version, kVersion);
-      St(shm->magic, kMagic, std::memory_order_release);
+    if (magic == 0 && driver) {
+      Initialize(shm);
       return shm;
     }
-    if (err) *err = "shared memory /recline_v1 was never initialized (bad magic)";
+    if (err) *err = std::string("shared memory ") + name + " was never initialized (bad magic)";
     UnmapSharedMemory(p, kShmSize);
     return nullptr;
   }
+  if (found) ReadIdentity(*shm, found);
   const uint32_t ver = Ld(shm->version);
-  if (ver != kVersion) {
-    if (err) {
-      char buf[128];
-      snprintf(buf, sizeof buf, "shared memory version %u, expected %u", ver, kVersion);
-      *err = buf;
+  if (ver == kVersion) return shm;
+  UnmapSharedMemory(p, kShmSize);
+  if (driver) {
+    // Replace it. Where the last unmap frees a segment (Windows), another
+    // process still has this one open: refuse until it is gone.
+    RemoveSharedMemory(name);
+    p = MapSharedMemory(name, kShmSize, /*create=*/true, &created, &e);
+    if (p && created) {
+      Initialize(static_cast<ReclineShm*>(p));
+      return static_cast<ReclineShm*>(p);
     }
-    UnmapSharedMemory(p, kShmSize);
-    return nullptr;
+    if (p) UnmapSharedMemory(p, kShmSize);
   }
-  return shm;
+  if (err) {
+    char buf[160];
+    snprintf(buf, sizeof buf, "shared memory %s has layout version %u, expected %u%s", name, ver,
+             kVersion, driver ? " (still open in another process)" : "");
+    *err = buf;
+  }
+  return nullptr;
 }
 
 }  // namespace recline

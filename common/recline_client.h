@@ -29,12 +29,36 @@ struct DriverStatus {
   bool driverAlive = false;  // pose_count advancing
   StateSnapshot state;
   HmdSnapshot hmd;
+  DriverIdentity identity;
 };
 
 // pose_count is sampled twice, `aliveWindowSec` apart, unless a previous
 // sample is supplied (non-blocking UI use).
 DriverStatus QueryStatus(ReclineShm* shm, uint64_t* prevPoseCount = nullptr,
                          double aliveWindowSec = 0.1);
+
+// How far a client may act on what the driver publishes (docs/DESIGN.md,
+// "Acting on the driver's state").
+enum class Trust {
+  None,     // no driver, or not this build's: its state is for display only
+  Cleanup,  // this build's driver, but newer files are installed: undo only
+  Full,
+};
+
+struct Diagnosis {
+  enum Level { Good, Info, Warn, Bad };
+  Trust trust = Trust::None;
+  Level level = Bad;
+  std::string line;   // status line (panel, reclinectl status)
+  std::string toast;  // short form, for a toast; empty when there is nothing to do
+};
+
+// The driver's state compared with this client's own build and install.
+// `shm` is the open segment, or null with `openError` and `refused` (what
+// OpenShm found) explaining why. `settings` (may be null) tells whether
+// SteamVR disabled the driver.
+Diagnosis Diagnose(const ReclineShm* shm, const std::string& openError, const DriverIdentity& refused,
+                   const DriverStatus& st, vr::IVRSettings* settings);
 
 enum class SendResult { Ok, NoHmdPose, InvalidArgs, Timeout, LockTimeout, Other };
 

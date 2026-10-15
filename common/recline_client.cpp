@@ -1,10 +1,12 @@
 #include "recline_client.h"
 
 #include <chrono>
+#include <fstream>
 #include <thread>
 
 #include "overlay_options.h"
 #include "platform.h"
+#include "recline_version.h"
 
 namespace recline {
 
@@ -56,6 +58,7 @@ DriverStatus QueryStatus(ReclineShm* shm, uint64_t* prevPoseCount, double aliveW
   if (!shm) return st;
   st.shmOk = ReadState(shm->state, &st.state) && ReadHmd(shm->hmd, &st.hmd);
   if (!st.shmOk) return st;
+  ReadIdentity(*shm, &st.identity);
   if (prevPoseCount) {
     st.driverAlive = st.hmd.pose_count != *prevPoseCount && st.hmd.pose_count != 0;
     *prevPoseCount = st.hmd.pose_count;
@@ -66,6 +69,118 @@ DriverStatus QueryStatus(ReclineShm* shm, uint64_t* prevPoseCount, double aliveW
     st.driverAlive = st.hmd.pose_count != c0;
   }
   return st;
+}
+
+namespace {
+
+// The VERSION file of the install this client runs from; empty if unreadable.
+std::string InstalledVersion() {
+  std::ifstream f(Utf8Path(InstallFile("VERSION")));
+  std::string v;
+  std::getline(f, v);
+  while (!v.empty() && (v.back() == '\r' || v.back() == ' ')) v.pop_back();
+  return v;
+}
+
+// The driver runs from the same bin/<platform>/ as this client.
+bool SameInstall(const std::string& modulePath) {
+  std::error_code ec;
+  const bool same =
+      std::filesystem::equivalent(Utf8Path(modulePath).parent_path(), Utf8Path(ExecutableDir()), ec);
+  return same && !ec;
+}
+
+std::string DirOf(const std::string& path) {
+  const std::u8string s = Utf8Path(path).parent_path().u8string();
+  return std::string(s.begin(), s.end());
+}
+
+Diagnosis Make(Trust trust, Diagnosis::Level level, std::string line, std::string toast) {
+  Diagnosis d;
+  d.trust = trust;
+  d.level = level;
+  d.line = std::move(line);
+  d.toast = std::move(toast);
+  return d;
+}
+
+bool DriverSetting(vr::IVRSettings* settings, const char* key, bool* value) {
+  if (!settings) return false;
+  vr::EVRSettingsError e = vr::VRSettingsError_None;
+  *value = settings->GetBool("driver_recline", key, &e);
+  return e == vr::VRSettingsError_None;
+}
+
+// No driver to talk to; `why` says what was found instead.
+Diagnosis NotRunning(vr::IVRSettings* settings, const std::string& why) {
+  bool v = false;
+  if (DriverSetting(settings, "blocked_by_safe_mode", &v) && v)
+    return Make(Trust::None, Diagnosis::Bad,
+                "Driver: blocked by SteamVR safe mode - re-enable it in Settings > Startup",
+                "Recline is blocked by SteamVR safe mode");
+  if (DriverSetting(settings, "enable", &v) && !v)
+    return Make(Trust::None, Diagnosis::Bad,
+                "Driver: turned off in SteamVR Settings > Startup > Manage add-ons",
+                "Recline is turned off in SteamVR's add-ons");
+  return Make(Trust::None, Diagnosis::Bad,
+              "Driver: NOT LOADED (" + why + ") - restart SteamVR; if that doesn't help, see vrserver.txt",
+              "Recline driver not loaded: restart SteamVR");
+}
+
+std::string DriverVersionText(const DriverIdentity& id) {
+  return id.present ? id.version : std::string("older than v1.3");
+}
+
+// Newer files than the running pair are installed: the driver file was
+// replaced since it was loaded, or the install's VERSION is not ours.
+bool InstallChanged(const DriverIdentity& id, std::string* installed) {
+  *installed = InstalledVersion();
+  int64_t size = 0, mtime = 0;
+  return !FileStamp(id.module_path, &size, &mtime) || size != id.module_size ||
+         mtime != id.module_mtime || *installed != RECLINE_VERSION;
+}
+
+}  // namespace
+
+Diagnosis Diagnose(const ReclineShm* shm, const std::string& openError, const DriverIdentity& refused,
+                   const DriverStatus& st, vr::IVRSettings* settings) {
+  const DriverIdentity& id = shm ? st.identity : refused;
+  const std::string ours = RECLINE_VERSION;
+  // Left in /dev/shm by an earlier SteamVR session. The pid alone could be
+  // reused, so a live pose stream overrides it.
+  if (id.present && !ProcessAlive(int(id.pid)) && !(shm && st.driverAlive))
+    return NotRunning(settings, "shared memory is from an earlier session");
+  // A driver of another build (an older one may also be left over: it can't
+  // say). Checked before liveness: only a restart brings the right one.
+  if (id.layout != 0 && (id.layout != kVersion || (id.present && id.version != ours)))
+    return Make(Trust::None, Diagnosis::Bad,
+                "Driver " + DriverVersionText(id) + " found, this is " + ours + " - restart SteamVR",
+                "Recline versions differ: restart SteamVR");
+  if (!shm) return NotRunning(settings, openError);
+  if (!st.shmOk) return Make(Trust::None, Diagnosis::Bad, "Driver: shared memory unreadable", {});
+  if (!id.present) return NotRunning(settings, "it has not started this session");
+  if (!st.driverAlive) return Make(Trust::None, Diagnosis::Warn, "Driver: loaded, no headset poses yet", {});
+  if (!SameInstall(id.module_path))
+    return Make(Trust::None, Diagnosis::Bad,
+                "Two installs: SteamVR loaded the driver from " + DirOf(id.module_path) +
+                    " - uninstall one, then restart SteamVR",
+                "Two Recline installs: see the Recline panel");
+  // This build's driver runs, but it or this client is about to be replaced:
+  // finish what is in progress, start nothing new.
+  std::string installed;
+  if (InstallChanged(id, &installed))
+    return Make(Trust::Cleanup, Diagnosis::Bad,
+                "Recline was updated" +
+                    (installed.empty() || installed == ours ? std::string() : " to " + installed) +
+                    " - restart SteamVR to finish",
+                "Recline was updated: restart SteamVR");
+  const uint32_t f = st.state.flags;
+  if (f & FLAG_HOOK_REFUSED)
+    return Make(Trust::Full, Diagnosis::Bad, "Driver: loaded, but the pose hook was refused (see vrserver.txt)",
+                "Recline can't change poses: see vrserver.txt");
+  if (!(f & FLAG_HOOK_INSTALLED))
+    return Make(Trust::Full, Diagnosis::Warn, "Driver: loaded, hook not installed", {});
+  return Make(Trust::Full, Diagnosis::Good, "Driver: loaded, hook installed", {});
 }
 
 const char* SendResultText(SendResult r) {

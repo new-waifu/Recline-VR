@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -200,9 +201,32 @@ class App {
   void OpenShmIfNeeded() {
     if (shm_) return;
     std::string err;
-    shm_ = OpenShm(/*takeOverUninitialized=*/false, &err);
+    refused_ = DriverIdentity{};
+    shm_ = OpenShm(/*driver=*/false, &err, kShmName, &refused_);
     if (!shm_) shmError_ = err;
   }
+
+  // --- acting on the driver's state ---------------------------------------------
+  // The driver's state reaches the overlay's actions in three places:
+  //   - the automatic-reset counter: HandleAutoReset re-zeroes the seated (and
+  //     standing) pose;
+  //   - FLAG_TRANSFORM_ACTIVE and the head pose: OnSystemRecenter reclines or
+  //     resets, and re-zeroes both poses;
+  //   - hmd_index: which device's worn events PumpEvents follows, which decides
+  //     when those two act.
+  // Zero poses persist in SteamVR's chaperone, beyond this session. Only a
+  // driver of exactly this build, loaded from this install, means by its state
+  // what this overlay reads into it, so every one of those places asks
+  // Trusted() first; a new one must too. Without full trust:
+  //   - Cleanup (this build's pair, newer files installed): no new recline and
+  //     no answering SteamVR's recenter, but undoing finishes as usual;
+  //   - None (any other driver, or none): its state is shown, never acted on.
+  //     The driver's own automatic reset (moved away, headset off) still
+  //     undoes a recline, and Reset sends a bare CMD_RESET without zero poses.
+  // A pair that doesn't match is refused even where it might work: it only
+  // arises from an update or a second install, and a restart fixes both.
+  // docs/DESIGN.md, "Acting on the driver's state", gives the reasons.
+  bool Trusted(Trust needed) const { return int(diag_.trust) >= int(needed); }
 
   // --- events & input ------------------------------------------------------------
 
@@ -213,7 +237,10 @@ class App {
         vr::VRSystem()->AcknowledgeQuit_Exiting();
         quit_ = true;
       }
-      if (ev.trackedDeviceIndex == status_.state.hmd_index) {
+      // Driver state: goes through Trusted(). The client HMD index otherwise.
+      const uint32_t hmd =
+          Trusted(Trust::Cleanup) ? status_.state.hmd_index : vr::k_unTrackedDeviceIndex_Hmd;
+      if (ev.trackedDeviceIndex == hmd) {
         if (ev.eventType == vr::VREvent_TrackedDeviceUserInteractionEnded) {
           if (removedSince_ < 0) removedSince_ = MonotonicSeconds();
         } else if (ev.eventType == vr::VREvent_TrackedDeviceUserInteractionStarted) {
@@ -291,24 +318,33 @@ class App {
     Log("%s", m.c_str());
   }
 
-  // An error for the status line; returns false for the caller to pass on.
-  bool Fail(const std::string& m) {
+  // An error for the status line and, since a shortcut may have asked with the
+  // panel out of sight, a toast; returns false for the caller to pass on.
+  bool Fail(const std::string& m, const std::string& toast) {
     SetMessage(m, kBad);
+    ShowToast(toast, kBad, kToastHoldLong);
     return false;
+  }
+
+  // Refused for the driver's state: the status line already says why.
+  bool FailUntrusted(const char* what) {
+    return Fail(std::string(what) + " refused: " + diag_.line,
+                diag_.toast.empty() ? std::string("Recline: ") + what + " refused" : diag_.toast);
   }
 
   // `system`: answering SteamVR's own recenter, so both zero poses are reset
   // afterwards (see ResetZeroPoses).
   bool DoRecenter(bool system = false) {
     OpenShmIfNeeded();
-    if (!shm_) return Fail("Shared memory unavailable: " + shmError_);
+    if (!Trusted(Trust::Full)) return FailUntrusted("Recenter");
     RecenterOptions rc = opt_.rc;
     rc.viewPitch = viewPitch_;  // level what the user sees through the lenses
     Rigid traw;
     std::string err;
-    if (!BuildTraw(vr::VRSystem(), rc, &traw, &err)) return Fail(err);
+    if (!BuildTraw(vr::VRSystem(), rc, &traw, &err)) return Fail(err, "Can't recline: headset not tracking");
     const SendResult r = SendCommand(shm_, CMD_RECENTER, &traw);
-    if (r != SendResult::Ok) return Fail(std::string("Recenter failed: ") + SendResultText(r));
+    if (r != SendResult::Ok)
+      return Fail(std::string("Recenter failed: ") + SendResultText(r), "Recline failed: see the Recline panel");
     const bool seated = ResetZeroPoses(system);
     Haptic();
     SetMessage(seated ? "Recentered (seated zero reset too)" : "Recentered", kGood);
@@ -318,9 +354,18 @@ class App {
 
   bool DoReset(bool system = false) {
     OpenShmIfNeeded();
-    if (!shm_) return Fail("Shared memory unavailable: " + shmError_);
+    // Untrusted: the bare reset only (the segment's layout is ours, or it
+    // would not be open), no zero poses.
+    if (!shm_) return FailUntrusted("Reset");
     const SendResult r = SendCommand(shm_, CMD_RESET, nullptr);
-    if (r != SendResult::Ok) return Fail(std::string("Reset failed: ") + SendResultText(r));
+    if (r != SendResult::Ok)
+      return Fail(std::string("Reset failed: ") + SendResultText(r), "Reset failed: see the Recline panel");
+    if (!Trusted(Trust::Cleanup)) {
+      Haptic();
+      SetMessage("Back to normal (zero poses left alone: " + diag_.line + ")", kWarn);
+      RefreshStatus();
+      return true;
+    }
     const bool seated = ResetZeroPoses(system || standingZeroedReclined_);
     standingZeroedReclined_ = false;
     Haptic();
@@ -352,7 +397,12 @@ class App {
   // re-zero from the true head. Either way the view ends up facing standing
   // forward, as after SteamVR's own recenter.
   void OnSystemRecenter() {
-    if (MonotonicSeconds() < ignoreSystemRecenterUntil_ || !status_.driverAlive) return;
+    if (MonotonicSeconds() < ignoreSystemRecenterUntil_) return;
+    // Driver state: goes through Trusted().
+    if (!Trusted(Trust::Full)) {
+      SetMessage("SteamVR recenter not answered: " + diag_.line, kWarn);
+      return;
+    }
     // Not on anyone's head (e.g. lying on a table): it would read as tilted
     // over and recline. The proximity sensor flickers briefly while worn.
     if (!HeadsetWorn()) return;
@@ -383,7 +433,7 @@ class App {
   // briefly in view. SteamVR notifications appear at the edge of view in the
   // Steam friends style, so this is a small head-locked overlay of our own.
 
-  void ShowToast(const std::string& text) {
+  void ShowToast(const std::string& text, Color border = kAccent, double hold = kToastHold) {
     auto* ov = vr::VROverlay();
     if (toast_ == vr::k_ulOverlayHandleInvalid) {
       const vr::EVROverlayError e = ov->CreateOverlay(kToastKey, "Recline", &toast_);
@@ -407,7 +457,7 @@ class App {
     const int w = std::max(kToastW, Canvas::TextWidth(text, kBig) + 48);
     Canvas c(w, kToastH);
     c.Clear({24, 26, 32, 200});
-    c.StrokeRect({0, 0, w, kToastH}, kAccent, 2);
+    c.StrokeRect({0, 0, w, kToastH}, border, 2);
     c.TextCentered({0, 0, w, kToastH}, text, kBig, kText);
     ov->SetOverlayWidthInMeters(toast_, 0.22f * float(w) / kToastW);
     // Drawn once while hidden, so SetOverlayRaw's flicker on replace is moot.
@@ -415,16 +465,17 @@ class App {
     ov->SetOverlayAlpha(toast_, 1.0f);
     ov->ShowOverlay(toast_);
     toastShownAt_ = MonotonicSeconds();
+    toastHold_ = hold;
   }
 
   void UpdateToast(double now) {
     if (toastShownAt_ == 0) return;
     const double t = now - toastShownAt_;
-    if (t >= kToastHold + kToastFade) {
+    if (t >= toastHold_ + kToastFade) {
       vr::VROverlay()->HideOverlay(toast_);
       toastShownAt_ = 0;
-    } else if (t > kToastHold) {
-      vr::VROverlay()->SetOverlayAlpha(toast_, float(1.0 - (t - kToastHold) / kToastFade));
+    } else if (t > toastHold_) {
+      vr::VROverlay()->SetOverlayAlpha(toast_, float(1.0 - (t - toastHold_) / kToastFade));
     }
   }
 
@@ -485,6 +536,10 @@ class App {
                  kWarn);
     }
     if (pendingAutoReset_ == AUTO_RESET_NONE || !HeadsetWorn()) return;
+    // Driver state: goes through Trusted(). Untrusted, the reason stays on the
+    // status line and the zero poses wait: in standby the driver has no poses
+    // to show it alive until shortly after the headset is back on.
+    if (!Trusted(Trust::Cleanup)) return;
     ResetZeroPoses(standingZeroedReclined_);
     standingZeroedReclined_ = false;
     Haptic();
@@ -494,11 +549,41 @@ class App {
   }
 
   void RefreshStatus() {
-    status_ = QueryStatus(shm_, &lastPoseCount_);
+    // Liveness is the pose count advancing between two samples; samples too
+    // close together could miss a pose and read as a dead driver.
+    const double now = MonotonicSeconds();
+    const bool wasAlive = status_.driverAlive;
+    uint64_t count = lastPoseCount_;
+    status_ = QueryStatus(shm_, &count);
+    if (now - lastLivenessSample_ >= kLivenessInterval) {
+      lastPoseCount_ = count;
+      lastLivenessSample_ = now;
+    } else {
+      status_.driverAlive = status_.driverAlive || wasAlive;
+    }
+    diag_ = Diagnose(shm_, shmError_, refused_, status_, vr::VRSettings());
+    if (diag_.line != diagLine_) {  // each change once: bounded with the log
+      diagLine_ = diag_.line;
+      diagSince_ = now;
+      Log("status: %s", diag_.line.c_str());
+    }
     HandleAutoReset();
-    vr::EVRSettingsError se = vr::VRSettingsError_None;
-    safeModeBlocked_ = vr::VRSettings()->GetBool("driver_recline", "blocked_by_safe_mode", &se) &&
-                       se == vr::VRSettingsError_None;
+    MaybeToastProblem(now);
+  }
+
+  // With the panel hidden nothing else shows a problem the user must act on,
+  // so say it once per condition and run, in view: once the headset is on and
+  // the condition has lasted a few seconds (the driver may still be starting).
+  // The panel stays hidden, as the user chose.
+  void MaybeToastProblem(double now) {
+    if (opt_.showInDashboard || diag_.toast.empty() || now - diagSince_ < kProblemSettle) return;
+    if (toastShownAt_ != 0 || toasted_.count(diag_.toast)) return;
+    if (vr::VRSystem()->GetTrackedDeviceActivityLevel(vr::k_unTrackedDeviceIndex_Hmd) !=
+        vr::k_EDeviceActivityLevel_UserInteraction)
+      return;
+    toasted_.insert(diag_.toast);
+    Log("toast: %s", diag_.toast.c_str());
+    ShowToast(diag_.toast, kWarn, kToastHoldLong);
   }
 
   // --- UI ----------------------------------------------------------------------------
@@ -625,19 +710,8 @@ class App {
       ty += kSmall.cellH + 3;
     };
     const auto& st = status_.state;
-    if (!shm_) {
-      line("Driver: shared memory unavailable (" + shmError_ + ")", kBad);
-    } else if (safeModeBlocked_) {
-      line("Driver: blocked by SteamVR safe mode - re-enable it in Settings > Startup", kBad);
-    } else if (!status_.driverAlive) {
-      line("Driver: NOT LOADED (no poses) - check vrserver.txt / vrpathreg", kBad);
-    } else if (st.flags & FLAG_HOOK_REFUSED) {
-      line("Driver: loaded, but the pose hook was refused (see vrserver.txt)", kBad);
-    } else if (st.flags & FLAG_HOOK_INSTALLED) {
-      line("Driver: loaded, hook installed", kGood);
-    } else {
-      line("Driver: loaded, hook not installed", kWarn);
-    }
+    static const Color kLevelColor[] = {kGood, kText, kWarn, kBad};
+    line(diag_.line, kLevelColor[diag_.level]);
     const bool active = status_.driverAlive && (st.flags & FLAG_TRANSFORM_ACTIVE);
     if (active) {
       double yaw, pitch, roll;
@@ -721,12 +795,20 @@ class App {
   uint32_t pendingAutoReset_ = AUTO_RESET_NONE;  // reason not yet shown
   vr::VROverlayHandle_t toast_ = vr::k_ulOverlayHandleInvalid;
   double toastShownAt_ = 0;  // 0: hidden
-  static constexpr double kToastHold = 1.2, kToastFade = 0.4;  // s
+  double toastHold_ = 0;
+  static constexpr double kToastHold = 1.2, kToastHoldLong = 3.0, kToastFade = 0.4;  // s
+  std::set<std::string> toasted_;  // problems already shown in a toast this run
+  static constexpr double kProblemSettle = 3.0;  // s
   ReclineShm* shm_ = nullptr;
   std::string shmError_;
+  DriverIdentity refused_;  // what OpenShm found when it refused the segment
   DriverStatus status_;
+  Diagnosis diag_;
+  std::string diagLine_;  // last logged
+  double diagSince_ = 0;
   uint64_t lastPoseCount_ = 0;
-  bool safeModeBlocked_ = false;
+  double lastLivenessSample_ = 0;
+  static constexpr double kLivenessInterval = 0.2;  // s
   std::vector<std::pair<Rect, Hit>> hits_;
   int mouseX_ = -1, mouseY_ = -1;
   // OpenVR reports overlay mouse coordinates with the origin at the bottom

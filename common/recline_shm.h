@@ -18,10 +18,15 @@
 
 namespace recline {
 
+// Frozen: the name, the size, `magic` and `version` at offsets 0 and 4, and the
+// IdentityBlock at kIdentityOffset never change, so any version of a client can
+// tell which driver it is talking to (docs/DESIGN.md, "Driver identity").
 constexpr uint32_t kMagic = 0x52434C4Eu;  // 'RCLN'
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;  // 2: IdentityBlock (1.3)
 constexpr const char* kShmName = "/recline_v1";
 constexpr size_t kShmSize = 4096;
+constexpr uint32_t kIdentityMagic = 0x52434944u;  // 'RCID'
+constexpr size_t kIdentityOffset = 2048;
 
 enum Cmd : uint32_t { CMD_NONE = 0, CMD_RECENTER = 1, CMD_RESET = 2, CMD_SET = 3 };
 enum CmdResult : uint32_t { RES_OK = 0, RES_NO_HMD_POSE = 1, RES_INVALID_ARGS = 2 };
@@ -62,15 +67,36 @@ struct alignas(64) HmdBlock {  // writers: hook threads (try-lock via seq CAS, n
   uint64_t pose_count;  // hook calls for the HMD (liveness)
 };
 
+// Which driver build created the segment, written once by the driver at init.
+// Segments are zero-filled when created and no version before 1.3 wrote here,
+// so `magic` stays 0 under an older driver.
+struct alignas(64) IdentityBlock {  // single writer: driver Init
+  uint32_t seq;
+  uint32_t magic;        // kIdentityMagic once written
+  uint32_t pid;          // vrserver
+  uint32_t _pad;
+  int64_t module_size;   // the driver file as loaded: size and
+  int64_t module_mtime;  // modification time (FileStamp)
+  char version[64];      // RECLINE_VERSION, NUL-terminated
+  char module_path[1024];  // driver_recline.so / .dll, UTF-8, NUL-terminated
+};
+
 struct ReclineShm {
   uint32_t magic;  // published last during init
   uint32_t version;
   CmdBlock cmd;
   StateBlock state;
   HmdBlock hmd;
+  uint8_t _free[kIdentityOffset - 448];  // later layouts grow into this
+  IdentityBlock identity;
 };
 
 static_assert(sizeof(ReclineShm) <= kShmSize, "shm layout too large");
+static_assert(offsetof(ReclineShm, identity) == kIdentityOffset, "frozen layout");
+static_assert(offsetof(IdentityBlock, magic) == 4 && offsetof(IdentityBlock, pid) == 8 &&
+                  offsetof(IdentityBlock, module_size) == 16 && offsetof(IdentityBlock, module_mtime) == 24 &&
+                  offsetof(IdentityBlock, version) == 32 && offsetof(IdentityBlock, module_path) == 96,
+              "frozen layout");
 // Two separately compiled processes share this layout: pin it.
 static_assert(offsetof(ReclineShm, cmd) == 64, "layout");
 static_assert(offsetof(ReclineShm, state) == 192, "layout");
@@ -203,12 +229,34 @@ void WriteState(StateBlock& b, const StateSnapshot& v);
 uint32_t SubmitCmd(CmdBlock& b, uint32_t cmd, const double q[4], const double t[3],
                    double timeoutSec = 2.0);
 
-// Open / create the segment: the creator publishes `magic` last with release
-// ordering; openers wait briefly for it and refuse a version mismatch.
+// The driver that created a segment, from its frozen parts, so it can be read
+// whatever the segment's layout.
+struct DriverIdentity {
+  uint32_t layout = 0;   // the segment's layout version (header)
+  bool present = false;  // IdentityBlock written: a driver from 1.3 on
+  uint32_t pid = 0;
+  int64_t module_size = 0, module_mtime = 0;
+  std::string version, module_path;
+};
+
+// False if no consistent snapshot was obtained (the driver died mid-write).
+bool ReadIdentity(const ReclineShm& shm, DriverIdentity* o);
+// Driver Init only; strings are truncated to fit.
+void WriteIdentity(IdentityBlock& b, const DriverIdentity& v);
+
+// Open the segment; only the driver creates it. The creator publishes `magic`
+// last with release ordering; openers wait briefly for it and refuse a layout
+// version mismatch.
+// `found` (optional) receives the identity of a segment with a valid magic,
+// also when its layout is refused, so a client can say which driver made it.
 //
-// takeOverUninitialized: the driver passes true. If an existing segment never
-// gets its magic published (creator crashed between ftruncate and the magic
-// store), the driver initializes it itself instead of refusing forever.
-ReclineShm* OpenShm(bool takeOverUninitialized, std::string* err, const char* name = kShmName);
+// driver: the driver passes true, and takes over segments it can't use
+// instead of refusing forever. One whose magic is never published (creator
+// crashed between ftruncate and the magic store) it initializes; one with
+// another layout version, left in /dev/shm by an earlier SteamVR session of
+// another version, it replaces with a new segment. Clients still mapping the
+// old one keep it, and see a driver that no longer runs.
+ReclineShm* OpenShm(bool driver, std::string* err, const char* name = kShmName,
+                    DriverIdentity* found = nullptr);
 
 }  // namespace recline
