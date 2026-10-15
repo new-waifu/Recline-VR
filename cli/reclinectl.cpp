@@ -551,11 +551,10 @@ int Bindings() {
     fprintf(stderr, "error: VR_Init: %s\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
     return 1;
   }
-  const vr::EVRInputError ie = vr::VRInput()->OpenBindingUI(
-      kOverlayAppKey, vr::k_ulInvalidActionSetHandle, vr::k_ulInvalidInputValueHandle,
-      /*bShowOnDesktop=*/false);
+  vr::EVRInputError ie = vr::VRInputError_None;
+  const bool ok = OpenOverlayBindingUI(vr::k_ulInvalidActionSetHandle, &ie);
   vr::VR_Shutdown();
-  if (ie != vr::VRInputError_None) {
+  if (!ok) {
     fprintf(stderr, "error: OpenBindingUI failed (%d)\n", int(ie));
     return 1;
   }

@@ -321,6 +321,28 @@ SendResult SendCommand(ReclineShm* shm, uint32_t cmd, const Rigid* payload,
   return SendResult::Timeout;
 }
 
+bool OpenOverlayBindingUI(vr::VRActionSetHandle_t set, vr::EVRInputError* err) {
+  auto* in = vr::VRInput();
+  // The editor wants a device: given none it still opens, at the app's top
+  // level, but returns VRInputError_InvalidDevice. A connected hand also opens
+  // its controller's page.
+  vr::VRInputValueHandle_t device = vr::k_ulInvalidInputValueHandle;
+  for (const char* hand : {"/user/hand/right", "/user/hand/left"}) {
+    vr::VRInputValueHandle_t h = vr::k_ulInvalidInputValueHandle;
+    vr::InputOriginInfo_t info{};
+    if (in->GetInputSourceHandle(hand, &h) == vr::VRInputError_None &&
+        in->GetOriginTrackedDeviceInfo(h, &info, sizeof info) == vr::VRInputError_None &&
+        info.trackedDeviceIndex != vr::k_unTrackedDeviceIndexInvalid) {
+      device = h;
+      break;
+    }
+  }
+  const vr::EVRInputError e = in->OpenBindingUI(kOverlayAppKey, set, device, /*bShowOnDesktop=*/false);
+  if (err) *err = e;
+  return e == vr::VRInputError_None ||
+         (e == vr::VRInputError_InvalidDevice && device == vr::k_ulInvalidInputValueHandle);
+}
+
 std::string InstallFile(const char* rel) {
   const std::filesystem::path root = Utf8Path(ExecutableDir()).parent_path().parent_path();
   const std::u8string s = (root / Utf8Path(rel)).make_preferred().u8string();

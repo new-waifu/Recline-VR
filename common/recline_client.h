@@ -99,6 +99,10 @@ SendResult SendCommand(ReclineShm* shm, uint32_t cmd, const Rigid* payload,
 // The overlay's SteamVR app key (packaging/recline_overlay.vrmanifest).
 constexpr const char* kOverlayAppKey = "user.recline.overlay";
 
+// Opens SteamVR's binding editor on the overlay's bindings (`set` may be
+// k_ulInvalidActionSetHandle), on the page of a connected hand's controller.
+bool OpenOverlayBindingUI(vr::VRActionSetHandle_t set, vr::EVRInputError* err);
+
 // `rel` (written with '/') under the install root, which holds the manifests
 // and resources/; the running binary sits two levels below it, in
 // bin/<platform>/, where SteamVR requires the driver. The result has the

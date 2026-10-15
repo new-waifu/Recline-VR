@@ -516,9 +516,8 @@ class App {
 
   // SteamVR's own route to an overlay app's bindings is buried; open it directly.
   void OpenBindings() {
-    const vr::EVRInputError e = vr::VRInput()->OpenBindingUI(
-        kOverlayAppKey, actionSet_, vr::k_ulInvalidInputValueHandle, /*bShowOnDesktop=*/false);
-    if (e != vr::VRInputError_None)
+    vr::EVRInputError e = vr::VRInputError_None;
+    if (!OpenOverlayBindingUI(actionSet_, &e))
       SetMessage("Could not open the binding UI (error " + std::to_string(int(e)) + ")", kBad);
     else
       SetMessage("Opened the controller binding editor", kText);
