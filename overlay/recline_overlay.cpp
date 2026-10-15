@@ -325,10 +325,12 @@ class App {
     return false;
   }
 
-  // Refused for the driver's state: the status line already says why.
-  // `verb`: what the toast says couldn't be done ("recline", "reset").
+  // Refused for the driver's state. The status line, drawn right above the
+  // message, already says why, so the message doesn't repeat it (the panel
+  // has room for 9 lines). `verb`: what the toast says couldn't be done
+  // ("recline", "reset").
   bool FailUntrusted(const char* what, const char* verb) {
-    return Fail(std::string(what) + " refused: " + diag_.line,
+    return Fail(std::string(what) + " refused (see above)",
                 diag_.toast.empty() ? std::string("Can't ") + verb + ": see the Recline VR panel" : diag_.toast);
   }
 
@@ -338,7 +340,7 @@ class App {
     OpenShmIfNeeded();
     if (!Trusted(Trust::Full)) return FailUntrusted("Recenter", "recline");
     CheckHeadset(MonotonicSeconds(), /*force=*/true);
-    if (headset_.steamLink) return Fail("Recenter refused: " + SteamLinkLine(headset_), kSteamLinkToast);
+    if (headset_.steamLink) return Fail("Recenter refused (see above)", kSteamLinkToast);
     RecenterOptions rc = opt_.rc;
     rc.viewPitch = viewPitch_;  // level what the user sees through the lenses
     Rigid traw;
@@ -364,7 +366,7 @@ class App {
       return Fail(std::string("Reset failed: ") + SendResultText(r), "Reset failed: see the Recline VR panel");
     if (!Trusted(Trust::Cleanup)) {
       Haptic();
-      SetMessage("Back to normal (zero poses left alone: " + diag_.line + ")", kWarn);
+      SetMessage("Back to normal (zero poses left alone, see above)", kWarn);
       RefreshStatus();
       return true;
     }
@@ -759,6 +761,9 @@ class App {
     static const Color kLevelColor[] = {kGood, kText, kWarn, kBad};
     line(diag_.line, kLevelColor[diag_.level]);
     if (headset_.steamLink) line(SteamLinkLine(headset_), kBad);
+    // The last action's result, before the informational lines: line() drops
+    // whatever no longer fits.
+    if (!message_.empty()) line(message_, messageColor_);
     const bool active = status_.driverAlive && (st.flags & FLAG_TRANSFORM_ACTIVE);
     if (active) {
       double yaw, pitch, roll;
@@ -782,7 +787,6 @@ class App {
     }
     if (!opt_.showInDashboard)
       line("Reopen with the \"Show the Recline panel\" shortcut or reclinectl panel show", kDim);
-    if (!message_.empty()) line(message_, messageColor_);
 
     Upload();
   }
