@@ -404,7 +404,11 @@ class App {
     if (MonotonicSeconds() < ignoreSystemRecenterUntil_) return;
     // Not on anyone's head (e.g. lying on a table): it would read as tilted
     // over and recline. The proximity sensor flickers briefly while worn.
-    if (!HeadsetWorn()) return;
+    // Ignored recenters are logged too: they leave no other trace.
+    if (!HeadsetWorn()) {
+      Log("SteamVR recenter: left alone (headset not worn)");
+      return;
+    }
     // Driver state: goes through Trusted(). With this option on, SteamVR's
     // recenter is a recline shortcut, so a refusal says why like one.
     if (!Trusted(Trust::Full)) {
@@ -430,6 +434,8 @@ class App {
         SetMessage(buf, kGood);
         ShowToast("Back to normal");
       }
+    } else {
+      Log("SteamVR recenter: left alone (view tilted %.0f deg, recline from %.0f)", tilt, opt_.systemRecenterTilt);
     }
   }
 
