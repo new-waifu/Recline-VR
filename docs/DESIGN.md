@@ -504,6 +504,21 @@ On the Frame, the PC-streaming client is an ordinary OpenVR app that reads poses
 from the compositor and sends them to the PC, so the Frame-side transform reaches
 streamed games with nothing installed on the PC. Verified in use.
 
+Recline VR installed on the PC can't recline a headset that streams over Steam
+Link (SteamVR's `vrlink` driver), a streamed Frame or any other. The driver applies
+R as usual and the PC renders reclined, but the headset re-projects every frame to
+its own head pose, and R is exactly such a difference: tested with a Frame, the view
+stayed upright, tilting further showed the black edge of the streamed image, the
+area sent sharpest (foveated) no longer matched where the user looked, and the
+laser pointer and highlights drifted from what was drawn. So on a Steam Link
+headset (`Prop_ActualTrackingSystemName_String` is `vrlink`, "the literal local
+driver name") recline is refused, in the overlay and in `reclinectl`, while reset
+still works. A streamed Frame keeps its identity (`Prop_ResourceRoot_String` and
+`Prop_ControllerType_String` are `frame_hmd`, SteamVR's resource-only Frame
+driver; model "Deckard MP"), and the message then says to install Recline VR on
+the Frame, which covers streamed games. Other wireless streaming (Virtual Desktop,
+ALVR) re-projects in its own way and is untested.
+
 ## Platforms
 
 OS-specific code sits behind two interfaces with one implementation file per

@@ -256,6 +256,34 @@ Diagnosis Diagnose(const ReclineShm* shm, const DriverIdentity& refused, const D
   return Make(Diagnosis::Ok, Trust::Full, Diagnosis::Good, "Driver: loaded, hook installed", {});
 }
 
+namespace {
+
+std::string HmdString(vr::IVRSystem* sys, vr::ETrackedDeviceProperty prop) {
+  char buf[256] = {};
+  vr::ETrackedPropertyError e = vr::TrackedProp_Success;
+  sys->GetStringTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd, prop, buf, sizeof buf, &e);
+  return e == vr::TrackedProp_Success ? buf : "";
+}
+
+}  // namespace
+
+Headset QueryHeadset(vr::IVRSystem* sys) {
+  Headset h;
+  if (!sys) return h;
+  // The literal local driver: Prop_TrackingSystemName_String is what the
+  // headset presents itself as ("cv" for a streamed Frame).
+  h.steamLink = HmdString(sys, vr::Prop_ActualTrackingSystemName_String) == "vrlink";
+  h.frame = HmdString(sys, vr::Prop_ResourceRoot_String) == "frame_hmd" ||
+            HmdString(sys, vr::Prop_ControllerType_String) == "frame_hmd";
+  return h;
+}
+
+std::string SteamLinkLine(const Headset& h) {
+  return h.frame ? "Recline VR doesn't work over Steam Link: install it on the Frame instead "
+                   "(it covers streamed games too)"
+                 : "Recline VR doesn't work over Steam Link streaming";
+}
+
 const char* SendResultText(SendResult r) {
   switch (r) {
     case SendResult::Ok: return "ok";

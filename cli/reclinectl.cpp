@@ -181,7 +181,9 @@ int Status() {
   } else {
     printf("status:          SteamVR is not running (%s)\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
   }
-  printf("may recline:     %s\n", TrustText(d.diag.trust));
+  const Headset headset = vrOk ? QueryHeadset(vr::VRSystem()) : Headset{};
+  if (headset.steamLink) printf("may recline:     no: %s\n", SteamLinkLine(headset).c_str());
+  else printf("may recline:     %s\n", TrustText(d.diag.trust));
   PrintRegistration();
   // Should have loaded, and nothing says why not: ask the system loader.
   if (vrOk && d.diag.cause == Diagnosis::NotLoaded)
@@ -213,7 +215,7 @@ int Status() {
   }
   PrintR("R:              ", s.R_q, s.R_t);
   printf("last cmd ack:    %u (result %u)\n", s.cmd_ack, s.cmd_result);
-  return d.diag.trust == Trust::Full ? 0 : 1;
+  return d.diag.trust == Trust::Full && !headset.steamLink ? 0 : 1;
 }
 
 int Send(ReclineShm* shm, uint32_t cmd, const Rigid* payload) {
@@ -300,6 +302,11 @@ int Recenter(int argc, char** argv) {
   }
   Driver d;
   if (!ConnectFor(Trust::Full, vr::VRSettings(), &d)) {
+    vr::VR_Shutdown();
+    return 1;
+  }
+  if (const Headset h = QueryHeadset(vr::VRSystem()); h.steamLink) {
+    fprintf(stderr, "error: %s\n", SteamLinkLine(h).c_str());
     vr::VR_Shutdown();
     return 1;
   }

@@ -337,6 +337,8 @@ class App {
   bool DoRecenter(bool system = false) {
     OpenShmIfNeeded();
     if (!Trusted(Trust::Full)) return FailUntrusted("Recenter", "recline");
+    CheckHeadset(MonotonicSeconds(), /*force=*/true);
+    if (headset_.steamLink) return Fail("Recenter refused: " + SteamLinkLine(headset_), kSteamLinkToast);
     RecenterOptions rc = opt_.rc;
     rc.viewPitch = viewPitch_;  // level what the user sees through the lenses
     Rigid traw;
@@ -570,6 +572,19 @@ class App {
     }
     HandleAutoReset();
     MaybeToastProblem(now);
+    CheckHeadset(now);
+  }
+
+  // The headset can change at any time (the Frame starts or stops streaming):
+  // checked every few seconds, and again before each recline.
+  void CheckHeadset(double now, bool force = false) {
+    if (!force && now < nextHeadsetCheck_) return;
+    nextHeadsetCheck_ = now + 5.0;
+    const Headset h = QueryHeadset(vr::VRSystem());
+    if (h.steamLink == headset_.steamLink && h.frame == headset_.frame) return;
+    headset_ = h;
+    dirty_ = true;
+    if (h.steamLink) Log("headset: %s over Steam Link: recline refused", h.frame ? "a Steam Frame" : "streamed");
   }
 
   // With the panel hidden nothing else shows a problem the user must act on,
@@ -743,6 +758,7 @@ class App {
     const auto& st = status_.state;
     static const Color kLevelColor[] = {kGood, kText, kWarn, kBad};
     line(diag_.line, kLevelColor[diag_.level]);
+    if (headset_.steamLink) line(SteamLinkLine(headset_), kBad);
     const bool active = status_.driverAlive && (st.flags & FLAG_TRANSFORM_ACTIVE);
     if (active) {
       double yaw, pitch, roll;
@@ -838,6 +854,8 @@ class App {
   double diagSince_ = 0;
   uint64_t lastPoseCount_ = 0;
   double lastLivenessSample_ = 0;
+  Headset headset_;
+  double nextHeadsetCheck_ = 0;
   static constexpr double kLivenessInterval = 0.2;  // s
   std::vector<std::pair<Rect, Hit>> hits_;
   int mouseX_ = -1, mouseY_ = -1;
