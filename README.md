@@ -1,13 +1,13 @@
 # Recline VR
 
 *Lie back and keep playing. Full pitch/roll recentering for SteamVR, built for the
-Steam Frame.*
+Steam Frame, and also for Windows and Linux PCs.*
 
 Use VR lying down or reclined. Lie back and use SteamVR's own recenter, and the
 direction you are looking becomes level and forward in VR, at a chosen eye height.
-It works for native apps on the Frame (OpenVR and OpenXR, standing and seated), and
-every tracked device moves together, so your hands stay attached. Recentering
-upright again puts everything back.
+It works for SteamVR apps (OpenVR and OpenXR, standing and seated), and every
+tracked device moves together, so your hands stay attached. Recentering upright
+again puts everything back.
 
 SteamVR's own recenter can only turn you around (yaw), not tilt the world. Recline
 VR rotates the whole tracked world instead; [docs/DESIGN.md](docs/DESIGN.md)
@@ -15,8 +15,8 @@ explains how and why.
 
 | Part | Path | What |
 |---|---|---|
-| `driver_recline.so` | `driver/` | SteamVR driver (adds no devices) that applies the recline rotation to every tracked device's pose. |
-| `librecline_xrshim.so` | `xrshim/` | Loaded into the Frame's `XRService` only (never into games); corrects the passthrough mesh and camera poses for the recline rotation. |
+| `driver_recline` | `driver/` | SteamVR driver (adds no devices) that applies the recline rotation to every tracked device's pose. |
+| `librecline_xrshim.so` | `xrshim/` | Steam Frame only. Loaded into the Frame's `XRService` only (never into games); corrects the passthrough mesh and camera poses for the recline rotation. |
 | `recline_overlay` | `overlay/` | Dashboard panel, controller actions and haptics; started by SteamVR. |
 | `reclinectl` | `cli/` | Command-line client: status, recenter, reset, overlay registration, diagnostics. |
 | shared code | `common/` | `/recline_v1` shared-memory protocol, transform and recenter math. |
@@ -43,15 +43,16 @@ explains how and why.
 - **Edit controller bindings** opens SteamVR's binding editor directly on this app.
 - **Show in dashboard** (on by default): untick it to remove the Recline icon from
   the SteamVR dashboard once the dashboard closes; SteamVR's recenter and the panel
-  shortcut keep working. To open the panel again, use the *Show the Recline panel* shortcut
-  (below) or run `reclinectl panel show`. If that shortcut is unbound, the panel
-  warns first and hides on a second click.
-- The status area shows whether the driver is loaded, the current rotation, and
-  warnings (another tool hooking poses, boundary limitations).
+  shortcut keep working. To open the panel again, use the *Show the Recline panel*
+  shortcut (below) or run `reclinectl panel show`. If that shortcut is unbound, the
+  panel warns first and hides on a second click.
+- The status area shows whether the driver is loaded and working, what to do if it
+  isn't, the current rotation, and warnings (another tool hooking poses, boundary
+  limitations).
 
-"Level" means what you see straight through the lenses. On the Frame that is about
-14° below the headset's nominal forward axis; the offset is read from SteamVR, so
-other headsets work too.
+"Level" means what you see straight through the lenses. On the Steam Frame that is
+about 14° below the headset's nominal forward axis; the offset is read from SteamVR,
+so other headsets work too.
 
 **Controller shortcut** (default binding, changeable via *Edit controller bindings*):
 hold both grips and click both sticks (trackpads if there are no sticks) to show
@@ -63,21 +64,30 @@ bind *Recline recenter* and *Reset to normal* there if you want dedicated ones.
 away or take the headset off, because SteamVR's boundary is only right without
 it. A short "Back to normal" in view tells you it happened.
 
-**Command line** (`~/.local/share/recline-vr/bin/linuxarm64/reclinectl`):
+**Command line:** `reclinectl` is in the install's `bin/<platform>/` folder
+(Steam Frame: `~/.local/share/recline-vr/bin/linuxarm64/reclinectl`; Linux PC:
+`~/.local/share/recline-vr/bin/linux64/reclinectl`; Windows:
+`%LOCALAPPDATA%\Programs\recline-vr\bin\win64\reclinectl.exe`).
 
     reclinectl status                      # driver loaded and matching? hook? rotation, conflicts
     reclinectl recenter [--level-only] [--keep-position] [--height M] [--no-seated-reset]
     reclinectl reset [--no-seated-reset]
     reclinectl set <yaw> <pitch> <roll> <x> <y> <z>   # explicit rotation (deg, m), testing
     reclinectl poses                       # device poses per tracking space + display geometry
+    reclinectl props                       # SteamVR drivers and device properties, for bug reports
     reclinectl bindings                    # open the binding editor in the headset
     reclinectl panel show|hide             # Recline icon in the SteamVR dashboard
     reclinectl register | unregister       # start the overlay with SteamVR (the installers do this)
     reclinectl setting get|set|remove <section> <key> [value]  # SteamVR settings, for experiments
 
-## Install / uninstall
+## Install
 
-On the Frame (it ships with CMake and a compiler), with SteamVR running:
+### On the Steam Frame
+
+If your headset is a Steam Frame, install Recline VR on the Frame itself. It works
+for both standalone and streamed games. The easy way to install is as follows. In
+the Frame's desktop mode, with SteamVR running (the Frame ships with CMake and a
+compiler):
 
     git clone https://github.com/new-waifu/Recline-VR.git
     cd Recline-VR
@@ -85,21 +95,60 @@ On the Frame (it ships with CMake and a compiler), with SteamVR running:
     steamvr restart
 
 Everything goes into your home directory; nothing in `/opt` is touched. To update,
-`git pull` and run `./install.sh` again, then restart SteamVR the same way.
+`git pull` and run `./install.sh` again, then restart SteamVR the same way. A
+release download (below) works on the Frame too, without building.
 
-Uninstall (SteamVR running):
+### From a release
 
-    ~/.local/share/recline-vr/uninstall.sh   # unregisters overlay and driver
-    steamvr restart
-    rm -rf ~/.local/share/recline-vr         # optionally also /dev/shm/recline_v1
+Download `recline-vr-<version>.zip` from the
+[releases](https://github.com/new-waifu/Recline-VR/releases) (the `-debug.zip` is
+only for debugging) and unzip it. It holds every platform. Then:
+
+- **Linux** (a PC, or the Frame): make sure SteamVR is running, run `./install.sh`
+  in the unzipped `recline-vr` folder, then restart SteamVR (on the Frame:
+  `steamvr restart`). It installs to `~/.local/share/recline-vr`.
+- **Windows:** with SteamVR **not** running, double-click `install.cmd` in the
+  unzipped `recline-vr` folder, then start SteamVR. It installs to
+  `%LOCALAPPDATA%\Programs\recline-vr`. The files aren't code-signed, so Windows
+  SmartScreen or your antivirus may warn about them; on SmartScreen's warning,
+  choose *More info*, then *Run anyway*.
+
+Either way you can delete the unzipped files afterwards. To update, do the same
+with the new release.
+
+**Headsets:** the Steam Frame (installed on the Frame, as above), and wired headsets
+on Windows and Linux PCs. Wireless PC headsets aren't supported. Installed on a PC,
+Recline VR refuses to recline a headset that streams over Steam Link, Steam Frame
+included: the headset re-projects every frame to its own head pose, which undoes
+the recline.
+
+### Uninstall
+
+- **Linux and the Steam Frame**, with SteamVR running:
+
+      ~/.local/share/recline-vr/uninstall.sh   # unregisters the overlay and the driver
+      steamvr restart                          # on a PC: restart SteamVR
+      rm -rf ~/.local/share/recline-vr         # optionally also /dev/shm/recline_v1
+
+- **Windows**, with SteamVR **not** running: run `uninstall.cmd` in
+  `%LOCALAPPDATA%\Programs\recline-vr`. It unregisters the overlay and the driver,
+  then shows that folder in Explorer for you to delete.
+
+Settings stay behind until you delete them: `~/.config/recline-vr` on Linux,
+`%LOCALAPPDATA%\recline-vr` on Windows (which also holds the overlay's log).
+
+To go back to an older version, uninstall first, then install the older one. On
+Linux and the Steam Frame, reboot your device in between (or stop SteamVR and
+remove `/dev/shm/recline_v1`).
 
 ## Build
 
 The OpenVR SDK is vendored in `third_party/openvr`; the overlay and CLI link its
-`openvr_api` loader statically. By hand:
+`openvr_api` loader statically. With CMake 3.21 or later (on Windows, Visual
+Studio 2019 or later):
 
     cmake -S . -B build && cmake --build build -j && ctest --test-dir build
-    build/stage/install.sh      # installs the staged layout
+    build/stage/install.sh      # installs the staged layout (Windows: build\stage\install.cmd)
 
 The overlay uses Vulkan when its headers are available at build time and falls back
 to `SetOverlayRaw` otherwise.
@@ -119,12 +168,20 @@ Driver (`resources/settings/default.vrsettings`, section `driver_recline`):
   without the overlay.
 - `downstreamCheck` (true): periodically check that nothing modifies poses after us.
 
-Overlay options are saved in `~/.config/recline-vr/overlay.conf`. The recline
-rotation itself is never saved: it is always reset when SteamVR restarts.
+Overlay options are saved in `~/.config/recline-vr/overlay.conf` on Linux and
+`%LOCALAPPDATA%\recline-vr\overlay.conf` on Windows. The recline rotation itself is
+never saved: it is always reset when SteamVR restarts.
 
 ## Troubleshooting
 
-The driver logs to `~/.local/share/Steam/logs/vrserver.txt` with prefix `[recline]`:
+Start with the panel's status line, or `reclinectl status`, which says the same in
+more detail: whether the driver is loaded, why not (not installed, turned off in
+SteamVR's add-ons, safe mode, failed to load), and whether an update or a second
+install needs a restart or an uninstall.
+
+The driver logs to SteamVR's `vrserver.txt` with prefix `[recline]` (in Steam's
+`logs` folder: `~/.local/share/Steam/logs` on the Frame and most Linux PCs,
+`C:\Program Files (x86)\Steam\logs` on Windows):
 
 - `hook installed; chained to …`: working. `hook refused: …` explains why not.
 - `GetRawTrackedDevicePoses returns post-world-from-driver poses …`: the conflict
@@ -134,23 +191,21 @@ The driver logs to `~/.local/share/Steam/logs/vrserver.txt` with prefix `[reclin
   `conflict: … modified after our hook …`: something changes poses after recline;
   see docs/DESIGN.md.
 
-The overlay logs to `~/.local/share/recline-vr/overlay.log` (the previous one is
-kept as `overlay.previous.log`).
-
-If the overlay says the driver isn't loaded, check that SteamVR's safe mode hasn't
-disabled it (SteamVR settings, Startup) and that `vrpathreg show` lists the driver.
+The overlay logs to `overlay.log` (`~/.local/share/recline-vr` on Linux,
+`%LOCALAPPDATA%\recline-vr` on Windows; the previous one is kept as
+`overlay.previous.log`).
 
 ## Known limitations
 
-- Passthrough (3D and 2D room view) relies on the XRService shim. If it can't load
-  or its safety checks fail, passthrough is misaligned while reclined (see
-  `~/.local/share/recline-vr/xrshim.log`).
+- On the Steam Frame, passthrough (3D and 2D room view) relies on the XRService
+  shim. If it can't load or its safety checks fail, passthrough is misaligned while
+  reclined (see `~/.local/share/recline-vr/xrshim.log`).
 - The boundary is drawn un-rotated and looks tilted while reclined, so Recline
   resets itself as soon as you get up, move away or take the headset off (see
   docs/DESIGN.md). While you lie still, your hands may not trigger the boundary
   where you'd expect.
-- A recenter invalidates PC-side tracker calibration (e.g. Space Calibrator) while
-  streaming.
+- When the Steam Frame streams from a PC, a recline invalidates PC-side tracker
+  calibration (e.g. Space Calibrator).
 
 ## License
 
