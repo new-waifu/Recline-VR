@@ -237,19 +237,30 @@ refuse a 1.3 driver instead of using it unchecked.
 A client compares the identity with itself, in this order:
 
 - **Left over:** vrserver's process id is gone and no poses arrive: the segment is
-  from an earlier session (Linux), and no driver runs.
-- **Another build:** another layout version, or another version string: the
-  driver's or the client's install changed while SteamVR ran, or a second install
-  is registered. "Restart SteamVR".
-- **Not running:** no segment, or no identity in it. SteamVR's settings say why when
-  they can: safe mode (`blocked_by_safe_mode`), or the add-on turned off (`enable`).
-  Otherwise SteamVR failed to load it or was started before the install: "restart
-  SteamVR; if that doesn't help, see vrserver.txt".
+  from an earlier session (Linux), and no driver runs (see Not running).
 - **Another install:** the driver's directory is not the client's own `bin/<platform>/`.
-  Same version or not, the two installs would go out of step at the next update.
+  Reported whatever the versions: SteamVR loads the first registered driver of a
+  name and skips the others ("Skipping duplicate external driver"), so a restart
+  would bring the same one back. A driver older than 1.3 can't say where it is
+  from; if another Recline install is registered, it is reported as this case too.
+- **Another build:** another layout version, or another version string: the
+  driver's or the client's install changed while SteamVR ran. "Restart SteamVR".
+- **Not running:** no segment, or no identity in it. In order: SteamVR's settings
+  (safe mode, `blocked_by_safe_mode`; the add-on turned off, `enable`), then its
+  driver registry: `external_drivers` in `openvrpaths.vrpath`, read with the OpenVR
+  loader's own reader, which is where `vrpathreg` writes. If the client's install
+  isn't there, "run the installer", naming any other folder Recline is registered
+  from. Otherwise SteamVR failed to load it or was started before the install:
+  "restart SteamVR". In that case `reclinectl status` loads the driver library in a
+  child process and prints the system loader's error (a missing library, a glibc
+  too new for the system, a file that isn't a library), which otherwise only
+  vrserver.txt shows.
 - **Updated:** the running driver and the client match, but the driver's file
   changed since it was loaded, or the install's `VERSION` is no longer the
   client's.
+- **Also registered:** everything matches, but another Recline install is
+  registered too. SteamVR skips it now; removing or re-registering one install
+  would bring the other back unannounced, so it is a warning (full trust).
 
 The comparison is exact rather than "compatible": whether two builds would work
 together is a guess, while a mismatch only arises from an update or a second
@@ -336,7 +347,9 @@ reloads the file when its modification time changes.
 
 With the panel hidden, and for a shortcut used in a game, the panel's status line
 is out of sight, so problems also show as a toast. A refused or failed shortcut
-always says why, briefly, with no haptic pulse (a pulse means it worked). A problem
+always says why, briefly, with no haptic pulse (a pulse means it worked); so does
+SteamVR's own recenter when "Recline on SteamVR's recenter" is on, since it then
+acts as a shortcut. A problem
 the user must act on (restart SteamVR, driver not loaded, two installs) shows once
 per condition while the overlay runs, and only while the panel is hidden, once the
 headset is worn and the condition has lasted 3 s (the driver may still be starting).

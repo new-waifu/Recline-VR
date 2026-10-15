@@ -51,6 +51,8 @@ bool PinModuleOf(const void* addr, std::string* err);
 
 // Dynamic libraries, by file name.
 void* OpenLibrary(const char* name);
+// Why the last OpenLibrary on this thread failed, as the system loader says.
+std::string LibraryError();
 void* LibrarySymbol(void* lib, const char* symbol);
 // File name of the Vulkan loader.
 extern const char* const kVulkanLoaderName;

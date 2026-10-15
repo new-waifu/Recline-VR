@@ -165,6 +165,17 @@ bool PinModuleOf(const void* addr, std::string* err) {
 
 void* OpenLibrary(const char* name) { return LoadLibraryA(name); }
 
+std::string LibraryError() {
+  const DWORD code = GetLastError();
+  wchar_t* msg = nullptr;
+  FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                 nullptr, code, 0, reinterpret_cast<wchar_t*>(&msg), 0, nullptr);
+  std::string s = msg ? ToUtf8(msg) : std::string();
+  if (msg) LocalFree(msg);
+  while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) s.pop_back();
+  return "error " + std::to_string(code) + (s.empty() ? "" : ": " + s);
+}
+
 void* LibrarySymbol(void* lib, const char* symbol) {
   return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(lib), symbol));
 }

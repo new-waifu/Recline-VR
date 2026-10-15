@@ -17,5 +17,7 @@ endif()
 # Client side of the protocol, for the overlay and reclinectl.
 add_library(recline_client STATIC recline_client.cpp overlay_options.cpp)
 target_compile_options(recline_client PRIVATE ${WARN})
-target_link_libraries(recline_client PUBLIC recline_shm)
+# The loader's openvrpaths.vrpath reader (vrcore), for the registration check.
+target_include_directories(recline_client SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/third_party/openvr/src)
+target_link_libraries(recline_client PUBLIC recline_shm ${OPENVR_API})
 recline_uses_version(recline_client)

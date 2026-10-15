@@ -203,7 +203,6 @@ class App {
     std::string err;
     refused_ = DriverIdentity{};
     shm_ = OpenShm(/*driver=*/false, &err, kShmName, &refused_);
-    if (!shm_) shmError_ = err;
   }
 
   // --- acting on the driver's state ---------------------------------------------
@@ -327,16 +326,17 @@ class App {
   }
 
   // Refused for the driver's state: the status line already says why.
-  bool FailUntrusted(const char* what) {
+  // `verb`: what the toast says couldn't be done ("recline", "reset").
+  bool FailUntrusted(const char* what, const char* verb) {
     return Fail(std::string(what) + " refused: " + diag_.line,
-                diag_.toast.empty() ? std::string("Recline: ") + what + " refused" : diag_.toast);
+                diag_.toast.empty() ? std::string("Can't ") + verb + ": see the Recline VR panel" : diag_.toast);
   }
 
   // `system`: answering SteamVR's own recenter, so both zero poses are reset
   // afterwards (see ResetZeroPoses).
   bool DoRecenter(bool system = false) {
     OpenShmIfNeeded();
-    if (!Trusted(Trust::Full)) return FailUntrusted("Recenter");
+    if (!Trusted(Trust::Full)) return FailUntrusted("Recenter", "recline");
     RecenterOptions rc = opt_.rc;
     rc.viewPitch = viewPitch_;  // level what the user sees through the lenses
     Rigid traw;
@@ -344,7 +344,7 @@ class App {
     if (!BuildTraw(vr::VRSystem(), rc, &traw, &err)) return Fail(err, "Can't recline: headset not tracking");
     const SendResult r = SendCommand(shm_, CMD_RECENTER, &traw);
     if (r != SendResult::Ok)
-      return Fail(std::string("Recenter failed: ") + SendResultText(r), "Recline failed: see the Recline panel");
+      return Fail(std::string("Recenter failed: ") + SendResultText(r), "Recline failed: see the Recline VR panel");
     const bool seated = ResetZeroPoses(system);
     Haptic();
     SetMessage(seated ? "Recentered (seated zero reset too)" : "Recentered", kGood);
@@ -356,10 +356,10 @@ class App {
     OpenShmIfNeeded();
     // Untrusted: the bare reset only (the segment's layout is ours, or it
     // would not be open), no zero poses.
-    if (!shm_) return FailUntrusted("Reset");
+    if (!shm_) return FailUntrusted("Reset", "reset");
     const SendResult r = SendCommand(shm_, CMD_RESET, nullptr);
     if (r != SendResult::Ok)
-      return Fail(std::string("Reset failed: ") + SendResultText(r), "Reset failed: see the Recline panel");
+      return Fail(std::string("Reset failed: ") + SendResultText(r), "Reset failed: see the Recline VR panel");
     if (!Trusted(Trust::Cleanup)) {
       Haptic();
       SetMessage("Back to normal (zero poses left alone: " + diag_.line + ")", kWarn);
@@ -398,14 +398,15 @@ class App {
   // forward, as after SteamVR's own recenter.
   void OnSystemRecenter() {
     if (MonotonicSeconds() < ignoreSystemRecenterUntil_) return;
-    // Driver state: goes through Trusted().
-    if (!Trusted(Trust::Full)) {
-      SetMessage("SteamVR recenter not answered: " + diag_.line, kWarn);
-      return;
-    }
     // Not on anyone's head (e.g. lying on a table): it would read as tilted
     // over and recline. The proximity sensor flickers briefly while worn.
     if (!HeadsetWorn()) return;
+    // Driver state: goes through Trusted(). With this option on, SteamVR's
+    // recenter is a recline shortcut, so a refusal says why like one.
+    if (!Trusted(Trust::Full)) {
+      FailUntrusted("SteamVR recenter", "recline");
+      return;
+    }
     HmdSnapshot h;
     StateSnapshot st;
     if (!shm_ || !ReadHmd(shm_->hmd, &h) || !ReadState(shm_->state, &st)) return;
@@ -561,7 +562,7 @@ class App {
     } else {
       status_.driverAlive = status_.driverAlive || wasAlive;
     }
-    diag_ = Diagnose(shm_, shmError_, refused_, status_, vr::VRSettings());
+    diag_ = Diagnose(shm_, refused_, status_, vr::VRSettings());
     if (diag_.line != diagLine_) {  // each change once: bounded with the log
       diagLine_ = diag_.line;
       diagSince_ = now;
@@ -800,7 +801,6 @@ class App {
   std::set<std::string> toasted_;  // problems already shown in a toast this run
   static constexpr double kProblemSettle = 3.0;  // s
   ReclineShm* shm_ = nullptr;
-  std::string shmError_;
   DriverIdentity refused_;  // what OpenShm found when it refused the segment
   DriverStatus status_;
   Diagnosis diag_;

@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "recenter_math.h"
 #include "recline_math.h"
@@ -47,6 +48,11 @@ enum class Trust {
 
 struct Diagnosis {
   enum Level { Good, Info, Warn, Bad };
+  enum Cause {
+    Ok, AlsoRegistered, HookRefused, NoPoses, Updated, OtherInstall, OtherVersion, Unreadable,
+    SafeMode, Disabled, NotRegistered, NotLoaded,
+  };
+  Cause cause = NotLoaded;
   Trust trust = Trust::None;
   Level level = Bad;
   std::string line;   // status line (panel, reclinectl status)
@@ -54,11 +60,20 @@ struct Diagnosis {
 };
 
 // The driver's state compared with this client's own build and install.
-// `shm` is the open segment, or null with `openError` and `refused` (what
-// OpenShm found) explaining why. `settings` (may be null) tells whether
-// SteamVR disabled the driver.
-Diagnosis Diagnose(const ReclineShm* shm, const std::string& openError, const DriverIdentity& refused,
-                   const DriverStatus& st, vr::IVRSettings* settings);
+// `shm` is the open segment, or null with `refused` (what OpenShm found, if
+// anything). `settings` (may be null) tells whether SteamVR disabled the driver.
+Diagnosis Diagnose(const ReclineShm* shm, const DriverIdentity& refused, const DriverStatus& st,
+                   vr::IVRSettings* settings);
+
+// Which Recline installs SteamVR loads drivers from (`external_drivers` in
+// openvrpaths.vrpath, found as the OpenVR loader finds it). Read at most every
+// 2 s; the overlay asks 4 times a second.
+struct DriverRegistration {
+  bool readable = false;
+  bool ours = false;  // this client's install is among them
+  std::vector<std::string> reclineRoots;
+};
+DriverRegistration ReadDriverRegistration();
 
 enum class SendResult { Ok, NoHmdPose, InvalidArgs, Timeout, LockTimeout, Other };
 

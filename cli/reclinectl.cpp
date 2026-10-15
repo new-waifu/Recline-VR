@@ -23,6 +23,7 @@
 
 
 #include "overlay_options.h"
+#include "platform.h"
 #include "recline_client.h"
 #include "recline_version.h"
 
@@ -61,7 +62,7 @@ Driver Connect(vr::IVRSettings* settings) {
   Driver d;
   d.shm = OpenShm(/*driver=*/false, &d.openError, kShmName, &d.refused);
   if (d.shm) d.status = QueryStatus(d.shm);
-  d.diag = Diagnose(d.shm, d.openError, d.refused, d.status, settings);
+  d.diag = Diagnose(d.shm, d.refused, d.status, settings);
   return d;
 }
 
@@ -93,6 +94,65 @@ int Version() {
   return 0;
 }
 
+// This install's driver library, as SteamVR loads it.
+std::string DriverLibrary() {
+#ifdef _WIN32
+  return ExecutableDir() + "\\driver_recline.dll";
+#else
+  return ExecutableDir() + "/driver_recline.so";
+#endif
+}
+
+// load-test (internal): loads the driver as SteamVR would, in this process.
+// Prints the system loader's error, or "ok"; status runs it as a child so a
+// broken library can't take reclinectl down with it.
+int LoadTest(const char* path) {
+  void* lib = OpenLibrary(path);
+  if (!lib) {
+    printf("%s\n", LibraryError().c_str());
+    return 1;
+  }
+  if (!LibrarySymbol(lib, "HmdDriverFactory")) {
+    printf("loads, but exports no HmdDriverFactory\n");
+    return 1;
+  }
+  printf("ok\n");
+  return 0;
+}
+
+// Runs load-test in a child process; its first output line.
+std::string RunLoadTest() {
+#ifdef _WIN32
+  const std::string exe = ExecutableDir() + "\\reclinectl.exe";
+  // cmd /c drops the outer quotes, keeping the inner ones.
+  const std::string cmd = "\"\"" + exe + "\" load-test \"" + DriverLibrary() + "\" 2>&1\"";
+  FILE* p = _popen(cmd.c_str(), "r");
+#else
+  const std::string cmd = "'" + ExecutableDir() + "/reclinectl' load-test '" + DriverLibrary() + "' 2>&1";
+  FILE* p = popen(cmd.c_str(), "r");
+#endif
+  if (!p) return "could not run the test";
+  char buf[512] = {};
+  std::string out = fgets(buf, sizeof buf, p) ? buf : "no output (the test crashed?)";
+#ifdef _WIN32
+  _pclose(p);
+#else
+  pclose(p);
+#endif
+  while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+  return out;
+}
+
+void PrintRegistration() {
+  const DriverRegistration reg = ReadDriverRegistration();
+  if (!reg.readable) {
+    printf("registered:      unknown (openvrpaths.vrpath unreadable)\n");
+    return;
+  }
+  printf("registered:      %s\n", reg.ours ? "yes" : "NO (run the installer)");
+  for (const std::string& r : reg.reclineRoots) printf("  recline root:  %s\n", r.c_str());
+}
+
 // Exit status 0 only when recline is fully usable.
 int Status() {
   Version();
@@ -111,7 +171,7 @@ int Status() {
     d.status = QueryStatus(d.shm, &prevCount);
     dt = MonotonicSeconds() - t0;
   }
-  d.diag = Diagnose(d.shm, d.openError, d.refused, d.status, vrOk ? vr::VRSettings() : nullptr);
+  d.diag = Diagnose(d.shm, d.refused, d.status, vrOk ? vr::VRSettings() : nullptr);
   if (vrOk) {
     printf("status:          %s\n", d.diag.line.c_str());
     const uint32_t pid = vr::VRApplications()->GetApplicationProcessId(kOverlayAppKey);
@@ -121,6 +181,10 @@ int Status() {
     printf("status:          SteamVR is not running (%s)\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
   }
   printf("may recline:     %s\n", TrustText(d.diag.trust));
+  PrintRegistration();
+  // Should have loaded, and nothing says why not: ask the system loader.
+  if (vrOk && d.diag.cause == Diagnosis::NotLoaded)
+    printf("load test:       %s (%s)\n", RunLoadTest().c_str(), DriverLibrary().c_str());
   const DriverIdentity& id = d.shm ? d.status.identity : d.refused;
   if (id.layout) printf("shm:             %s layout v%u (this build: v%u)\n", kShmName, id.layout, kVersion);
   else printf("shm:             %s\n", d.openError.c_str());
@@ -471,8 +535,8 @@ int Panel(int argc, char** argv) {
     fprintf(stderr, "error: could not write %s\n", reinterpret_cast<const char*>(path.c_str()));
     return 1;
   }
-  printf(o.showInDashboard ? "Recline panel shown in the SteamVR dashboard\n"
-                           : "Recline panel removed from the SteamVR dashboard once it is closed\n");
+  printf(o.showInDashboard ? "Recline VR panel shown in the SteamVR dashboard\n"
+                           : "Recline VR panel removed from the SteamVR dashboard once it is closed\n");
   return 0;
 }
 
@@ -561,6 +625,7 @@ int main(int argc, char** argv) {
   const std::string c = argv[1];
   if (c == "--version") return Version();
   if (c == "status") return Status();
+  if (c == "load-test" && argc == 3) return LoadTest(argv[2]);
   if (c == "recenter") return Recenter(argc - 2, argv + 2);
   if (c == "reset") return Reset(argc - 2, argv + 2);
   if (c == "set") return Set(argc - 2, argv + 2);

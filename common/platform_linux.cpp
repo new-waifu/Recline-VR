@@ -131,6 +131,11 @@ bool PinModuleOf(const void* addr, std::string* err) {
 
 void* OpenLibrary(const char* name) { return dlopen(name, RTLD_NOW | RTLD_LOCAL); }
 
+std::string LibraryError() {
+  const char* e = dlerror();
+  return e ? e : "unknown error";
+}
+
 void* LibrarySymbol(void* lib, const char* symbol) { return dlsym(lib, symbol); }
 
 const char* const kVulkanLoaderName = "libvulkan.so.1";

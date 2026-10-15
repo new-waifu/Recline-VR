@@ -2,11 +2,14 @@
 
 #include <chrono>
 #include <fstream>
+#include <iterator>
+#include <vector>
 #include <thread>
 
 #include "overlay_options.h"
 #include "platform.h"
 #include "recline_version.h"
+#include "vrcore/vrpathregistry_public.h"
 
 namespace recline {
 
@@ -73,6 +76,8 @@ DriverStatus QueryStatus(ReclineShm* shm, uint64_t* prevPoseCount, double aliveW
 
 namespace {
 
+namespace fs = std::filesystem;
+
 // The VERSION file of the install this client runs from; empty if unreadable.
 std::string InstalledVersion() {
   std::ifstream f(Utf8Path(InstallFile("VERSION")));
@@ -82,21 +87,37 @@ std::string InstalledVersion() {
   return v;
 }
 
-// The driver runs from the same bin/<platform>/ as this client.
-bool SameInstall(const std::string& modulePath) {
+// This client's install root (bin/<platform>/ is two levels below it).
+fs::path OwnRoot() { return Utf8Path(ExecutableDir()).parent_path().parent_path(); }
+
+bool SameDir(const fs::path& a, const fs::path& b) {
   std::error_code ec;
-  const bool same =
-      std::filesystem::equivalent(Utf8Path(modulePath).parent_path(), Utf8Path(ExecutableDir()), ec);
+  const bool same = fs::equivalent(a, b, ec);
   return same && !ec;
 }
 
-std::string DirOf(const std::string& path) {
-  const std::u8string s = Utf8Path(path).parent_path().u8string();
+std::string Text(const fs::path& p) {
+  const std::u8string s = p.u8string();
   return std::string(s.begin(), s.end());
 }
 
-Diagnosis Make(Trust trust, Diagnosis::Level level, std::string line, std::string toast) {
+// The driver runs from the same bin/<platform>/ as this client.
+bool SameInstall(const std::string& modulePath) {
+  return SameDir(Utf8Path(modulePath).parent_path(), Utf8Path(ExecutableDir()));
+}
+
+// A driver root whose manifest names the driver "recline".
+bool IsReclineRoot(const fs::path& root) {
+  std::ifstream f(root / "driver.vrdrivermanifest");
+  const std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  const size_t key = s.find("\"name\"");
+  return key != std::string::npos && s.find("\"recline\"", key) != std::string::npos;
+}
+
+Diagnosis Make(Diagnosis::Cause cause, Trust trust, Diagnosis::Level level, std::string line,
+               std::string toast) {
   Diagnosis d;
+  d.cause = cause;
   d.trust = trust;
   d.level = level;
   d.line = std::move(line);
@@ -111,24 +132,43 @@ bool DriverSetting(vr::IVRSettings* settings, const char* key, bool* value) {
   return e == vr::VRSettingsError_None;
 }
 
-// No driver to talk to; `why` says what was found instead.
-Diagnosis NotRunning(vr::IVRSettings* settings, const std::string& why) {
-  bool v = false;
-  if (DriverSetting(settings, "blocked_by_safe_mode", &v) && v)
-    return Make(Trust::None, Diagnosis::Bad,
-                "Driver: blocked by SteamVR safe mode - re-enable it in Settings > Startup",
-                "Recline is blocked by SteamVR safe mode");
-  if (DriverSetting(settings, "enable", &v) && !v)
-    return Make(Trust::None, Diagnosis::Bad,
-                "Driver: turned off in SteamVR Settings > Startup > Manage add-ons",
-                "Recline is turned off in SteamVR's add-ons");
-  return Make(Trust::None, Diagnosis::Bad,
-              "Driver: NOT LOADED (" + why + ") - restart SteamVR; if that doesn't help, see vrserver.txt",
-              "Recline driver not loaded: restart SteamVR");
+// Another registered Recline root than this client's, or empty.
+std::string OtherRegisteredRoot(const DriverRegistration& reg) {
+  for (const std::string& r : reg.reclineRoots)
+    if (!SameDir(Utf8Path(r), OwnRoot())) return r;
+  return {};
 }
 
-std::string DriverVersionText(const DriverIdentity& id) {
-  return id.present ? id.version : std::string("older than v1.3");
+Diagnosis TwoInstalls(const std::string& otherDir) {
+  return Make(Diagnosis::OtherInstall, Trust::None, Diagnosis::Bad,
+              "Two installs: SteamVR uses Recline VR from " + otherDir + " - uninstall one, then restart SteamVR",
+              "Two Recline VR installs: see the Recline VR panel");
+}
+
+// No driver runs this session.
+Diagnosis NotRunning(vr::IVRSettings* settings) {
+  bool v = false;
+  if (DriverSetting(settings, "blocked_by_safe_mode", &v) && v)
+    return Make(Diagnosis::SafeMode, Trust::None, Diagnosis::Bad,
+                "Driver: blocked by SteamVR safe mode - re-enable it in Settings > Startup",
+                "Recline VR is blocked by SteamVR safe mode");
+  if (DriverSetting(settings, "enable", &v) && !v)
+    return Make(Diagnosis::Disabled, Trust::None, Diagnosis::Bad,
+                "Driver: turned off in SteamVR Settings > Startup > Manage add-ons",
+                "Recline VR is turned off in SteamVR's add-ons");
+  const DriverRegistration reg = ReadDriverRegistration();
+  if (reg.readable && !reg.ours) {
+    const std::string other = OtherRegisteredRoot(reg);
+    if (!other.empty())
+      return Make(Diagnosis::NotRegistered, Trust::None, Diagnosis::Bad,
+                  "Driver: SteamVR has Recline VR registered from " + other + ", not from here - run this install's installer",
+                  "Recline VR is registered from another folder");
+    return Make(Diagnosis::NotRegistered, Trust::None, Diagnosis::Bad,
+                "Driver: not registered with SteamVR - run the installer", "Recline VR is not installed in SteamVR");
+  }
+  return Make(Diagnosis::NotLoaded, Trust::None, Diagnosis::Bad,
+              "Driver: not loaded - restart SteamVR (if it persists: reclinectl status)",
+              "Recline VR driver not loaded: restart SteamVR");
 }
 
 // Newer files than the running pair are installed: the driver file was
@@ -142,45 +182,78 @@ bool InstallChanged(const DriverIdentity& id, std::string* installed) {
 
 }  // namespace
 
-Diagnosis Diagnose(const ReclineShm* shm, const std::string& openError, const DriverIdentity& refused,
-                   const DriverStatus& st, vr::IVRSettings* settings) {
+DriverRegistration ReadDriverRegistration() {
+  static DriverRegistration cached;
+  static double readAt = -1e9;
+  const double now = MonotonicSeconds();
+  if (now - readAt < 2.0) return cached;
+  readAt = now;
+  DriverRegistration& reg = cached;
+  reg = DriverRegistration{};
+  std::string runtime, config, log;
+  std::vector<std::string> drivers;
+  reg.readable = CVRPathRegistry_Public::GetPaths(&runtime, &config, &log, nullptr, nullptr, &drivers);
+  if (!reg.readable) return reg;
+  for (const std::string& d : drivers) {
+    if (!IsReclineRoot(Utf8Path(d))) continue;
+    reg.reclineRoots.push_back(d);
+    if (SameDir(Utf8Path(d), OwnRoot())) reg.ours = true;
+  }
+  return reg;
+}
+
+Diagnosis Diagnose(const ReclineShm* shm, const DriverIdentity& refused, const DriverStatus& st,
+                   vr::IVRSettings* settings) {
   const DriverIdentity& id = shm ? st.identity : refused;
   const std::string ours = RECLINE_VERSION;
   // Left in /dev/shm by an earlier SteamVR session. The pid alone could be
   // reused, so a live pose stream overrides it.
-  if (id.present && !ProcessAlive(int(id.pid)) && !(shm && st.driverAlive))
-    return NotRunning(settings, "shared memory is from an earlier session");
-  // A driver of another build (an older one may also be left over: it can't
-  // say). Checked before liveness: only a restart brings the right one.
-  if (id.layout != 0 && (id.layout != kVersion || (id.present && id.version != ours)))
-    return Make(Trust::None, Diagnosis::Bad,
-                "Driver " + DriverVersionText(id) + " found, this is " + ours + " - restart SteamVR",
-                "Recline versions differ: restart SteamVR");
-  if (!shm) return NotRunning(settings, openError);
-  if (!st.shmOk) return Make(Trust::None, Diagnosis::Bad, "Driver: shared memory unreadable", {});
-  if (!id.present) return NotRunning(settings, "it has not started this session");
-  if (!st.driverAlive) return Make(Trust::None, Diagnosis::Warn, "Driver: loaded, no headset poses yet", {});
-  if (!SameInstall(id.module_path))
-    return Make(Trust::None, Diagnosis::Bad,
-                "Two installs: SteamVR loaded the driver from " + DirOf(id.module_path) +
-                    " - uninstall one, then restart SteamVR",
-                "Two Recline installs: see the Recline panel");
+  if (id.present && !ProcessAlive(int(id.pid)) && !(shm && st.driverAlive)) return NotRunning(settings);
+  // The driver of another install, whatever its version: a restart would
+  // bring the same one back.
+  if (id.present && !SameInstall(id.module_path))
+    return TwoInstalls(Text(Utf8Path(id.module_path).parent_path().parent_path().parent_path()));
+  // A driver of another build. An older one can't say where it is from (or
+  // whether it still runs); if another install is registered, it is from there.
+  if (id.layout != 0 && (id.layout != kVersion || (id.present && id.version != ours))) {
+    if (!id.present) {
+      const std::string other = OtherRegisteredRoot(ReadDriverRegistration());
+      if (!other.empty()) return TwoInstalls(other);
+    }
+    return Make(Diagnosis::OtherVersion, Trust::None, Diagnosis::Bad,
+                "Driver " + (id.present ? id.version : std::string("older than v1.3")) + " found, this is " +
+                    ours + " - restart SteamVR",
+                "Recline VR versions differ: restart SteamVR");
+  }
+  if (!shm || !id.present) return NotRunning(settings);
+  if (!st.shmOk) return Make(Diagnosis::Unreadable, Trust::None, Diagnosis::Bad, "Driver: shared memory unreadable", {});
+  if (!st.driverAlive)
+    return Make(Diagnosis::NoPoses, Trust::None, Diagnosis::Warn, "Driver: loaded, no headset poses yet", {});
   // This build's driver runs, but it or this client is about to be replaced:
   // finish what is in progress, start nothing new.
   std::string installed;
   if (InstallChanged(id, &installed))
-    return Make(Trust::Cleanup, Diagnosis::Bad,
-                "Recline was updated" +
+    return Make(Diagnosis::Updated, Trust::Cleanup, Diagnosis::Bad,
+                "Recline VR was updated" +
                     (installed.empty() || installed == ours ? std::string() : " to " + installed) +
                     " - restart SteamVR to finish",
-                "Recline was updated: restart SteamVR");
+                "Recline VR was updated: restart SteamVR");
   const uint32_t f = st.state.flags;
-  if (f & FLAG_HOOK_REFUSED)
-    return Make(Trust::Full, Diagnosis::Bad, "Driver: loaded, but the pose hook was refused (see vrserver.txt)",
-                "Recline can't change poses: see vrserver.txt");
+  // The driver sets HOOK_INSTALLED or HOOK_REFUSED before its first state
+  // write, and its poses (liveness) only flow after that: a live driver
+  // without HOOK_INSTALLED has refused.
   if (!(f & FLAG_HOOK_INSTALLED))
-    return Make(Trust::Full, Diagnosis::Warn, "Driver: loaded, hook not installed", {});
-  return Make(Trust::Full, Diagnosis::Good, "Driver: loaded, hook installed", {});
+    return Make(Diagnosis::HookRefused, Trust::Full, Diagnosis::Bad,
+                "Driver: loaded, but the pose hook was refused (see vrserver.txt)",
+                "Recline VR isn't working: see the Recline VR panel");
+  // SteamVR loads the first of two registered installs and skips the other;
+  // removing or re-registering one would bring the other back unannounced.
+  const std::string other = OtherRegisteredRoot(ReadDriverRegistration());
+  if (!other.empty())
+    return Make(Diagnosis::AlsoRegistered, Trust::Full, Diagnosis::Warn,
+                "Driver: loaded; Recline VR is also registered from " + other + " (SteamVR skips it) - uninstall it",
+                {});
+  return Make(Diagnosis::Ok, Trust::Full, Diagnosis::Good, "Driver: loaded, hook installed", {});
 }
 
 const char* SendResultText(SendResult r) {
