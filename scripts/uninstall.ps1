@@ -35,6 +35,9 @@ try {
   } else {
     Write-Host "Now delete $Dest"
   }
+  # This script runs from that folder, so it can't delete it; show it instead.
+  # Interactive runs only: -NoPause means nobody is watching.
+  if (-not $NoPause) { Start-Process explorer.exe -ArgumentList "/select,`"$Dest`"" }
 } catch {
   Write-Host "error: $_" -ForegroundColor Red
   $failed = $true
