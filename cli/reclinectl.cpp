@@ -38,6 +38,7 @@ void Usage() {
           "                           [--no-seated-reset]\n"
           "       reclinectl reset [--no-seated-reset]\n"
           "       reclinectl poses        (HMD/controller poses as apps see them)\n"
+          "       reclinectl props        (SteamVR drivers and device string properties)\n"
           "       reclinectl bindings     (open the controller binding editor in the headset)\n"
           "       reclinectl panel show|hide   (the overlay's icon in the SteamVR dashboard)\n"
           "       reclinectl register | unregister   (start the overlay with SteamVR, or stop)\n"
@@ -352,6 +353,43 @@ int Set(int argc, char** argv) {
   return Send(d.shm, CMD_SET, &R);
 }
 
+// SteamVR's drivers and every string property of every connected device, to
+// find out how a headset or controller identifies itself.
+int Props() {
+  vr::EVRInitError e = vr::VRInitError_None;
+  vr::VR_Init(&e, vr::VRApplication_Background);
+  if (e != vr::VRInitError_None) {
+    fprintf(stderr, "error: VR_Init: %s\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
+    return 1;
+  }
+  char buf[4096];
+  if (auto* dm = vr::VRDriverManager()) {
+    printf("drivers:\n");
+    for (uint32_t i = 0; i < dm->GetDriverCount(); ++i) {
+      buf[0] = 0;
+      dm->GetDriverName(i, buf, sizeof buf);
+      printf("  %-28s %s\n", buf, dm->IsEnabled(i) ? "enabled" : "disabled");
+    }
+  }
+  static const char* const kClass[] = {"invalid", "hmd", "controller", "generic tracker", "tracking reference",
+                                       "display redirect"};
+  auto* sys = vr::VRSystem();
+  for (uint32_t d = 0; d < vr::k_unMaxTrackedDeviceCount; ++d) {
+    const vr::ETrackedDeviceClass cls = sys->GetTrackedDeviceClass(d);
+    if (cls == vr::TrackedDeviceClass_Invalid) continue;
+    printf("device %u (%s)%s:\n", d, unsigned(cls) < 6 ? kClass[cls] : "?",
+           sys->IsTrackedDeviceConnected(d) ? "" : " not connected");
+    for (int id = 1; id < 10000; ++id) {
+      vr::ETrackedPropertyError pe = vr::TrackedProp_Success;
+      buf[0] = 0;
+      sys->GetStringTrackedDeviceProperty(d, vr::ETrackedDeviceProperty(id), buf, sizeof buf, &pe);
+      if (pe == vr::TrackedProp_Success && buf[0]) printf("  %4d = %s\n", id, buf);
+    }
+  }
+  vr::VR_Shutdown();
+  return 0;
+}
+
 int Poses() {
   vr::EVRInitError e = vr::VRInitError_None;
   vr::VR_Init(&e, vr::VRApplication_Background);
@@ -630,6 +668,7 @@ int main(int argc, char** argv) {
   if (c == "reset") return Reset(argc - 2, argv + 2);
   if (c == "set") return Set(argc - 2, argv + 2);
   if (c == "poses") return Poses();
+  if (c == "props") return Props();
   if (c == "bindings") return Bindings();
   if (c == "setting") return Setting(argc - 2, argv + 2);
   if (c == "panel") return Panel(argc - 2, argv + 2);
