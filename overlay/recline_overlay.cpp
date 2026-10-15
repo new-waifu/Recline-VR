@@ -645,6 +645,34 @@ class App {
     }
   }
 
+  // `s` in lines no wider than `width`, broken at spaces; a word wider than a
+  // line on its own (a path) is broken where it must.
+  static std::vector<std::string> WrapText(const std::string& s, const recline_font::FontFace& f, int width) {
+    std::vector<std::string> out;
+    std::string cur;
+    size_t i = 0;
+    while (i < s.size()) {
+      const size_t sp = s.find(' ', i);
+      const std::string word = s.substr(i, sp == std::string::npos ? std::string::npos : sp - i);
+      i = sp == std::string::npos ? s.size() : sp + 1;
+      const std::string joined = cur.empty() ? word : cur + " " + word;
+      if (Canvas::TextWidth(joined, f) <= width) {
+        cur = joined;
+        continue;
+      }
+      if (!cur.empty()) out.push_back(cur);
+      cur = word;
+      while (Canvas::TextWidth(cur, f) > width) {
+        size_t n = cur.size() - 1;
+        while (n > 1 && Canvas::TextWidth(cur.substr(0, n), f) > width) --n;
+        out.push_back(cur.substr(0, n));
+        cur = cur.substr(n);
+      }
+    }
+    if (!cur.empty() || out.empty()) out.push_back(cur);
+    return out;
+  }
+
   void Button(Rect r, const std::string& label, Hit id, bool selected,
               const recline_font::FontFace& f = kSmall) {
     const bool hover = r.Contains(mouseX_, mouseY_);
@@ -706,9 +734,11 @@ class App {
     c.FillRect({32, y, kW - 64, kH - y - 24}, kPanel);
     int ty = y + 12;
     auto line = [&](const std::string& s, Color col) {
-      if (ty + kSmall.cellH > kH - 28) return;
-      c.Text(48, ty, s, kSmall, col);
-      ty += kSmall.cellH + 3;
+      for (const std::string& part : WrapText(s, kSmall, kW - 96)) {
+        if (ty + kSmall.cellH > kH - 28) return;
+        c.Text(48, ty, part, kSmall, col);
+        ty += kSmall.cellH + 3;
+      }
     };
     const auto& st = status_.state;
     static const Color kLevelColor[] = {kGood, kText, kWarn, kBad};
