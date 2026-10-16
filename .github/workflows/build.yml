@@ -112,7 +112,7 @@ jobs:
           name: recline-vr
           path: dist
       # A draft: publishing it stays a manual step.
-      - run: gh release create "$GITHUB_REF_NAME" dist/*.zip --draft --verify-tag --title "$GITHUB_REF_NAME"
+      - run: gh release create "$GITHUB_REF_NAME" dist/*.zip --draft --verify-tag --title "Recline VR $GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
