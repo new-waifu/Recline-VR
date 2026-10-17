@@ -6,52 +6,20 @@
 // makes a later hook wrap ours, as on Linux.
 #include "pose_hook.h"
 
-#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <utility>
 
 #include <windows.h>
 
 #include <MinHook.h>
 
 #include "platform.h"
+#include "vtable_index_win.h"
 
 namespace recline {
 
 namespace {
-
-// --- vtable index ---------------------------------------------------------------
-// MSVC represents a pointer to a virtual member function as the address of a
-// vcall thunk that jumps through the object's vtable, so the index is not in the
-// pointer. Calling it on a fake object whose vtable entries record their own
-// position yields the index.
-constexpr size_t kMaxSlots = 64;
-size_t g_probed = SIZE_MAX;  // Init runs once, single-threaded
-
-template <size_t I>
-void Probe() {
-  g_probed = I;
-}
-template <size_t... I>
-constexpr std::array<void (*)(), sizeof...(I)> MakeProbes(std::index_sequence<I...>) {
-  return {{&Probe<I>...}};
-}
-
-size_t PoseSlotIndex() {
-  static constexpr auto probes = MakeProbes(std::make_index_sequence<kMaxSlots>{});
-  struct FakeObject {
-    const void* vtbl;
-  } fake{probes.data()};
-  // Called without arguments: the probes take none and the x64 caller owns the
-  // stack, so the mismatch is harmless.
-  using AnyFn = void (vr::IVRServerDriverHost::*)();
-  const auto pmf = reinterpret_cast<AnyFn>(&vr::IVRServerDriverHost::TrackedDevicePoseUpdated);
-  g_probed = SIZE_MAX;
-  (reinterpret_cast<vr::IVRServerDriverHost*>(&fake)->*pmf)();
-  return g_probed;
-}
 
 // --- validation -------------------------------------------------------------------
 constexpr DWORD kWritable =
@@ -74,8 +42,8 @@ uint8_t g_jump[kJumpBytes];
 
 bool InstallPoseHook(vr::IVRServerDriverHost* host, PoseFn hook, std::atomic<PoseFn>* prev,
                      std::string* why, std::string* info) {
-  const size_t idx = PoseSlotIndex();
-  if (idx >= kMaxSlots) {
+  const size_t idx = VtableIndex(&vr::IVRServerDriverHost::TrackedDevicePoseUpdated);
+  if (idx == SIZE_MAX) {
     *why = "could not derive the vtable index";
     return false;
   }
