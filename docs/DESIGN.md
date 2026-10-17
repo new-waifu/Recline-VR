@@ -516,20 +516,87 @@ On the Frame, the PC-streaming client is an ordinary OpenVR app that reads poses
 from the compositor and sends them to the PC, so the Frame-side transform reaches
 streamed games with nothing installed on the PC. Verified in use.
 
-Recline VR installed on the PC can't recline a headset that streams over Steam
-Link (SteamVR's `vrlink` driver), a streamed Frame or any other. The driver applies
-R as usual and the PC renders reclined, but the headset re-projects every frame to
-its own head pose, and R is exactly such a difference: tested with a Frame, the view
-stayed upright, tilting further showed the black edge of the streamed image, the
-area sent sharpest (foveated) no longer matched where the user looked, and the
-laser pointer and highlights drifted from what was drawn. So on a Steam Link
-headset (`Prop_ActualTrackingSystemName_String` is `vrlink`, "the literal local
-driver name") recline is refused, in the overlay and in `reclinectl`, while reset
-still works. A streamed Frame keeps its identity (`Prop_ResourceRoot_String` and
-`Prop_ControllerType_String` are `frame_hmd`, SteamVR's resource-only Frame
-driver; model "Deckard MP"), and the message then says to install Recline VR on
-the Frame, which covers streamed games. Other wireless streaming (Virtual Desktop,
-ALVR) re-projects in its own way and is untested.
+Over Steam Link (SteamVR's `vrlink` driver; `Prop_ActualTrackingSystemName_String`
+is `vrlink`, "the literal local driver name"), Recline VR installed on the PC needs
+one more step. The driver applies R as usual and the PC renders reclined, but the
+headset re-projects every frame to its own head pose, and R is exactly such a
+difference. Without correction (tested with a Frame) the view stayed upright,
+tilting further showed the black edge of the streamed image, the area sent
+sharpest (foveated) no longer matched where the user looked, and the laser pointer
+and highlights drifted from what was drawn.
+
+**The correction.** `vrlink` takes the composited frames itself, as an
+`IVRDriverDirectModeComponent`: vrserver hands it each layer with the head pose it
+was rendered from (`SubmitLayerPerEye_t::mHmdPose`), and that pose is what the
+headset re-projects from. Logged against our own poses, `mHmdPose` is R ∘ H (H the
+head pose before R), give or take the driver's prediction. The driver hooks
+`IVRServerDriverHost::TrackedDeviceAdded` (as the pose hook, `driver/layer_hook.h`)
+to learn of each display device (HMD or display redirect), asks it for its
+direct-mode component, and hooks that component's `SubmitLayer`, replacing `mHmdPose` with R⁻¹ ∘ `mHmdPose` = H: the pose
+the headset knows, so its re-projection keeps R. One `SubmitLayer` hook per
+process (one HMD); the hook stays installed for the life of vrserver, since it sits
+in the other driver's code, which may be unloaded first.
+
+**Runtime check.** The correction assumes `mHmdPose` is in our space. vrserver,
+not the headset's driver, fills it in, so this is the same for every driver; the
+check guards against SteamVR changing it (to driver space before
+world-from-driver, say), in which case correcting would break the view while
+claiming to fix it. The hook samples the incoming pose about once a second and
+the command thread compares it with R ∘ H as it arrives; once 8 of the last 10 samples match within 10° and
+10 cm (room for the driver's prediction), the driver corrects frames and reports
+`FLAG_LAYERS_CORRECTED`; at 4 or fewer it stops. A new R or a new HMD restarts the
+window, and only the transitions are logged (at most 10). Clients allow recline
+over Steam Link only with that flag; otherwise they refuse it, as before, while
+reset still works. The `submitLayerFixSkip` setting turns the correction off for
+the drivers it names (by the driver library's name: `driver_vrlink.dll` is
+`vrlink`), or for all with `*`: a denylist, for a driver found to misbehave. A driver
+that combined `mHmdPose` with SteamVR-world poses read elsewhere would pass the
+check and still be wrong; none is known. Only `IVRDriverDirectModeComponent_009`
+is hooked: a driver built against an older SDK doesn't answer to it and is left
+alone (logged), as is everything if SteamVR moves to a newer version, in which
+case recline over Steam Link is refused again until the SDK is updated.
+
+**Other direct-mode drivers.** Of the drivers shipped with SteamVR or on Steam,
+these implement the component (checked from their class hierarchies): `vrlink`;
+`oculus` and `oculus_legacy` (Rift, Quest over Link: frames go to the Oculus
+runtime, which re-projects from the render pose too, so a PC-side recline there
+likely needs this as much as Steam Link; untested); and `prism`. PRISM is
+SteamVR's newer presentation backend (`vrprismhost`, behind the `usePrism`
+setting, off by default): vrcompositor still composes everything (scene,
+overlays, dashboard, controller models, boundary) and hands the result to the
+`prism` driver's display redirect device, whose `SubmitLayer` reads `mHmdPose`
+for each eye; PRISM then smooths motion and generates in-between frames from
+head poses that `driver_lighthouse` provides directly, bypassing our hook, so it
+would undo R the same way. Display redirects are hooked like HMDs for this. FOVE,
+Oasis (WMR) and `lighthouse` itself leave presentation to vrcompositor
+(`IVRDisplayComponent` only) and are unaffected. Virtual Desktop streams SteamVR
+through SteamVR's `oculus` driver (it ships its own Oculus runtime), so it is
+covered under that name; its own driver only adds hand and body tracking to the
+headset.
+
+**Scope.** Recline VR covers SteamVR and SteamVR drivers. What another runtime
+draws by itself (the Oculus dashboard and Guardian, Virtual Desktop's menus,
+a headset's own passthrough) stays in that runtime's un-reclined space, which is
+outside its reach and by design. A streamed Frame is refused for a different
+reason: what it draws by itself is SteamVR's own dashboard, so a SteamVR feature
+would be broken.
+
+**Verified** with a Frame streaming to Windows (view stays reclined, no black
+edges, controllers, laser pointer and a game correct), and with an Android phone
+running Valve's own Steam Link headset app (the one SteamVR ships for Quest, Pico
+and Vive headsets) on Monado's OpenXR runtime, which `vrlink` treats as a generic
+headset: the recline held, and the SteamVR dashboard came with the stream and
+stayed put in the reclined world.
+
+**A streamed Steam Frame is still refused.** It draws the SteamVR dashboard itself,
+in its own un-reclined tracking (`vrlink` sends it the dashboard's frames, state
+and laser-mouse overlay separately), while the PC tests the laser against where it
+placed the dashboard in the reclined world, so pointing is off by R. A streamed
+Frame keeps its identity (`Prop_ResourceRoot_String` and
+`Prop_ControllerType_String` are `frame_hmd`, SteamVR's resource-only Frame driver;
+model "Deckard MP"), and the message says to install Recline VR on the Frame,
+which covers streamed games with nothing missing. Other wireless streaming
+(Virtual Desktop, ALVR) re-projects in its own way and is untested.
 
 ## Platforms
 
@@ -544,7 +611,9 @@ definition of the same name), which defaults to on for `linuxarm64` and off
 elsewhere:
 
 - the XRService passthrough shim and the driver's spawn injection that loads it;
-- the overlay's hint about PC-side calibration while streaming.
+- the overlay's hint about PC-side calibration while streaming;
+- leaving out the Steam Link hooks (`driver/layer_hook.h`): they are compiled in
+  but never installed, since the Frame presents its own frames.
 
 The rest is generic. A Linux x86-64 build has run in SteamVR with the null
 headset driver (under WSL, where SteamVR's compositor can't start, so without the

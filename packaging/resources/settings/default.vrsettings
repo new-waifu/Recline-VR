@@ -3,6 +3,7 @@
 		"enable" : true,
 		"loadPriority" : 100000,
 		"debugPitchDeg" : 0.0,
-		"downstreamCheck" : true
+		"downstreamCheck" : true,
+		"submitLayerFixSkip" : ""
 	}
 }

@@ -278,6 +278,10 @@ Headset QueryHeadset(vr::IVRSystem* sys) {
   return h;
 }
 
+bool SteamLinkBlocked(const Headset& h, uint32_t flags) {
+  return h.steamLink && (h.frame || !(flags & FLAG_LAYERS_CORRECTED));
+}
+
 std::string SteamLinkLine(const Headset& h) {
   return h.frame ? "Recline VR doesn't work over Steam Link: install it on the Frame instead "
                    "(it covers streamed games too)"

@@ -36,6 +36,9 @@ enum StateFlags : uint32_t {
   FLAG_CONFLICT_DOWNSTREAM = 1u << 2,
   FLAG_WRAPPED = 1u << 3,
   FLAG_HOOK_REFUSED = 1u << 4,
+  // The headset's driver takes the frames itself (Steam Link) and gets them
+  // with R taken back out of their render pose (driver/layer_hook.h).
+  FLAG_LAYERS_CORRECTED = 1u << 5,
 };
 // Why the driver undid the recline on its own (StateBlock::auto_reset).
 enum AutoResetReason : uint32_t { AUTO_RESET_NONE = 0, AUTO_RESET_MOVED = 1, AUTO_RESET_REMOVED = 2 };

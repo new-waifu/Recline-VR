@@ -340,7 +340,8 @@ class App {
     OpenShmIfNeeded();
     if (!Trusted(Trust::Full)) return FailUntrusted("Recenter", "recline");
     CheckHeadset(MonotonicSeconds(), /*force=*/true);
-    if (headset_.steamLink) return Fail("Recenter refused (see above)", kSteamLinkToast);
+    if (SteamLinkBlocked(headset_, status_.state.flags))
+      return Fail("Recenter refused (see above)", kSteamLinkToast);
     RecenterOptions rc = opt_.rc;
     rc.viewPitch = viewPitch_;  // level what the user sees through the lenses
     Rigid traw;
@@ -597,7 +598,7 @@ class App {
     if (h.steamLink == headset_.steamLink && h.frame == headset_.frame) return;
     headset_ = h;
     dirty_ = true;
-    if (h.steamLink) Log("headset: %s over Steam Link: recline refused", h.frame ? "a Steam Frame" : "streamed");
+    if (h.steamLink) Log("headset: %s over Steam Link", h.frame ? "a Steam Frame" : "streamed");
   }
 
   // With the panel hidden nothing else shows a problem the user must act on,
@@ -771,7 +772,7 @@ class App {
     const auto& st = status_.state;
     static const Color kLevelColor[] = {kGood, kText, kWarn, kBad};
     line(diag_.line, kLevelColor[diag_.level]);
-    if (headset_.steamLink) line(SteamLinkLine(headset_), kBad);
+    if (SteamLinkBlocked(headset_, st.flags)) line(SteamLinkLine(headset_), kBad);
     // The last action's result, before the informational lines: line() drops
     // whatever no longer fits.
     if (!message_.empty()) line(message_, messageColor_);

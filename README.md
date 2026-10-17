@@ -117,10 +117,10 @@ Either way you can delete the unzipped files afterwards. To update, do the same
 with the new release.
 
 **Headsets:** the Steam Frame (installed on the Frame, as above), and wired headsets
-on Windows and Linux PCs. Wireless PC headsets aren't supported. Installed on a PC,
-Recline VR refuses to recline a headset that streams over Steam Link, Steam Frame
-included: the headset re-projects every frame to its own head pose, which undoes
-the recline.
+on Windows and Linux PCs. Headsets streaming over Steam Link (such as Quest or
+Pico) should work too. Other forms of wireless streaming may work but have not been
+tested. A Steam Frame streaming over Steam Link is not supported: install Recline VR
+on the Frame instead.
 
 ### Uninstall
 
@@ -167,6 +167,11 @@ Driver (`resources/settings/default.vrsettings`, section `driver_recline`):
 - `debugPitchDeg` (0): apply a fixed pitch about the head at startup, for testing
   without the overlay.
 - `downstreamCheck` (true): periodically check that nothing modifies poses after us.
+- `submitLayerFixSkip` (empty): over Steam Link (and other drivers that take the
+  frames themselves), the recline is taken back out of each frame's render pose so
+  the headset keeps it (see docs/DESIGN.md, "Streaming to a PC"). List driver names
+  here, separated by commas (e.g. `vrlink`), or `*` for all, to turn that off for
+  them; for Steam Link, recline is then refused.
 
 Overlay options are saved in `~/.config/recline-vr/overlay.conf` on Linux and
 `%LOCALAPPDATA%\recline-vr\overlay.conf` on Windows. The recline rotation itself is

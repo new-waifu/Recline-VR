@@ -22,6 +22,7 @@
 #include <thread>
 
 #include "auto_reset.h"
+#include "layer_hook.h"
 #include "platform.h"
 #include "pose_hook.h"
 #include "pose_math.h"
@@ -227,6 +228,95 @@ void PoseHook(vr::IVRServerDriverHost* self, uint32_t id, const vr::DriverPose_t
 }
 
 // ---------------------------------------------------------------------------
+// Direct-mode layers (layer_hook.h): take R back out of each layer's render
+// pose, once the command thread has seen that the driver's render poses are in
+// our space (g_layersValid), unless the submitLayerFixSkip setting names the
+// driver.
+
+// The hooks are for PC headsets (Steam Link and the like); the Frame presents
+// its own frames, so Frame builds never install them.
+#ifdef RECLINE_FRAME
+constexpr bool kLayerHooks = false;
+#else
+constexpr bool kLayerHooks = true;
+#endif
+
+std::atomic<DeviceAddedFn> g_prevAdded{nullptr};
+std::atomic<SubmitLayerFn> g_prevSubmit{nullptr};
+// Display devices (HMDs, display redirects) added since the command thread last
+// looked; a full queue drops the device (SteamVR adds one or two).
+constexpr int kMaxAddedDisplays = 4;
+std::atomic<vr::ITrackedDeviceServerDriver*> g_addedDisplays[kMaxAddedDisplays] = {};
+std::atomic<bool> g_layerFix{true};
+std::atomic<bool> g_layersValid{false};
+std::atomic<uint64_t> g_layerCalls{0};
+
+// A layer's render pose, sampled about once a second for the command thread.
+
+struct alignas(64) LayerSample {
+  uint32_t seq;
+  double q[4];
+  double t[3];
+  uint64_t calls;
+};
+LayerSample g_layerSample{};
+std::atomic<double> g_nextLayerSample{0.0};
+
+void SampleLayer(const LayerPerEye& e, uint64_t calls) {
+  const double now = MonotonicSeconds();
+  double next = g_nextLayerSample.load(std::memory_order_relaxed);
+  if (now < next) return;
+  if (!g_nextLayerSample.compare_exchange_strong(next, now + 1.0, std::memory_order_relaxed)) return;
+  const Rigid m = FromMatrix34(e.mHmdPose);
+  LayerSample& b = g_layerSample;
+  uint32_t s;
+  if (!SeqTryLock(b.seq, &s)) return;
+  St(b.q[0], m.q.w); St(b.q[1], m.q.x); St(b.q[2], m.q.y); St(b.q[3], m.q.z);
+  St(b.t[0], m.t.x); St(b.t[1], m.t.y); St(b.t[2], m.t.z);
+  St(b.calls, calls);
+  SeqWriteEnd(b.seq, s);
+}
+
+void SubmitLayerHook(vr::IVRDriverDirectModeComponent* self, const LayerPerEye (&perEye)[2]) {
+  const SubmitLayerFn prev = g_prevSubmit.load(std::memory_order_acquire);
+  const uint64_t calls = g_layerCalls.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (g_disabled.load(std::memory_order_relaxed)) return prev(self, perEye);
+  SampleLayer(perEye[0], calls);  // as submitted, before any correction
+  RSnapshot R;
+  if (!g_layerFix.load(std::memory_order_relaxed) || !g_layersValid.load(std::memory_order_relaxed) ||
+      !ReadLocalR(&R) || R.identity)
+    return prev(self, perEye);
+  // The layer was rendered from R ∘ H; tell the driver H, the pose its headset
+  // knows, so its re-projection keeps R.
+  LayerPerEye fixed[2] = {perEye[0], perEye[1]};
+  const Rigid inv = Inverse(R.r);
+  for (LayerPerEye& e : fixed) ToMatrix34(Compose(inv, FromMatrix34(e.mHmdPose)), &e.mHmdPose);
+  prev(self, fixed);
+}
+
+bool DeviceAddedHook(vr::IVRServerDriverHost* self, const char* serial, vr::ETrackedDeviceClass cls,
+                     vr::ITrackedDeviceServerDriver* drv) {
+  const DeviceAddedFn prev = g_prevAdded.load(std::memory_order_acquire);
+  const bool ok = prev(self, serial, cls, drv);
+  // The frames go to the HMD, or to a display redirect that takes over its
+  // display (SteamVR's PRISM compositor backend).
+  if (ok && drv && !g_disabled.load() &&
+      (cls == vr::TrackedDeviceClass_HMD || cls == vr::TrackedDeviceClass_DisplayRedirect)) {
+    const char* what = cls == vr::TrackedDeviceClass_HMD ? "HMD" : "display redirect";
+    bool queued = false;
+    for (auto& slot : g_addedDisplays) {
+      vr::ITrackedDeviceServerDriver* empty = nullptr;
+      if (slot.compare_exchange_strong(empty, drv, std::memory_order_release)) {
+        queued = true;
+        break;
+      }
+    }
+    Log("%s added: %s%s", what, serial ? serial : "?", queued ? "" : " (not checked: queue full)");
+  }
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
 // Hook installation
 
 bool InstallHook(vr::IVRServerDriverHost* host, std::string* why) {
@@ -327,6 +417,15 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       g_hookInstalled.store(true);
       state_.flags |= FLAG_HOOK_INSTALLED;
       Log("hook installed; chained to %p", reinterpret_cast<void*>(g_prev.load()));
+    }
+    if (kLayerHooks && host_) {
+      std::string info;
+      why.clear();
+      if (InstallDeviceAddedHook(host_, &DeviceAddedHook, &g_prevAdded, &why, &info))
+        Log("TrackedDeviceAdded hook installed (%s)", info.c_str());
+      else
+        Log("TrackedDeviceAdded hook refused: %s%s%s", why.c_str(), info.empty() ? "" : "; ",
+            info.c_str());
     }
 
     if (shm) {
@@ -434,6 +533,8 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
       bool stateDirty = false;
 
       MaybeInjectSpawn();
+      MaybeHookLayers(now);
+      CheckLayerSample();
 
       if (shm_) {
         // Crashed-writer recovery: release a seq stuck at the same odd value
@@ -477,6 +578,7 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
 
       if (now >= nextSlow) {
         nextSlow = now + 1.0;
+        ReadLayerFixSetting();
         uint32_t flags = state_.flags;
         // wrapped: someone replaced our slot entry, so their transform is applied
         // before R. Expected (e.g. a calibrator), but reported.
@@ -484,6 +586,8 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
           if (PoseHookWrapped()) flags |= FLAG_WRAPPED;
           else flags &= ~FLAG_WRAPPED;
         }
+        if (layersHooked_ && g_layerFix.load() && g_layersValid.load()) flags |= FLAG_LAYERS_CORRECTED;
+        else flags &= ~FLAG_LAYERS_CORRECTED;
         if (g_conflictDownstream.load(std::memory_order_relaxed)) flags |= FLAG_CONFLICT_DOWNSTREAM;
         else flags &= ~FLAG_CONFLICT_DOWNSTREAM;
         if (state_.hmd_index != g_hmdIndex.load()) {
@@ -522,6 +626,123 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     }
   }
 
+  // A display device's direct-mode component, once its driver has added it
+  // (it may only provide the component once activated: retry for a while).
+  struct PendingDisplay {
+    vr::ITrackedDeviceServerDriver* drv = nullptr;
+    int tries = 0;
+    double next = 0;
+  };
+
+  void MaybeHookLayers(double now) {
+    for (auto& slot : g_addedDisplays) {
+      vr::ITrackedDeviceServerDriver* drv = slot.exchange(nullptr, std::memory_order_acquire);
+      if (!drv) continue;
+      for (PendingDisplay& p : pendingDisplays_) {
+        if (!p.drv) {
+          p = {drv, 0, now};
+          break;
+        }
+      }
+    }
+    for (PendingDisplay& p : pendingDisplays_) {
+      if (!p.drv || now < p.next) continue;
+      auto* comp = static_cast<vr::IVRDriverDirectModeComponent*>(
+          p.drv->GetComponent(vr::IVRDriverDirectModeComponent_Version));
+      if (!comp && ++p.tries < 10) {
+        p.next = now + 1.0;
+        continue;
+      }
+      p = {};
+      if (comp) HookLayers(comp);
+      else Log("a display device has no %s (frames not corrected)", vr::IVRDriverDirectModeComponent_Version);
+    }
+  }
+
+  void HookLayers(vr::IVRDriverDirectModeComponent* comp) {
+    std::string why, info;
+    std::string module;
+    const bool ok = InstallSubmitLayerHook(comp, &SubmitLayerHook, &g_prevSubmit, &module, &why, &info);
+    if (ok)
+      Log("SubmitLayer hook installed (%s)", info.empty() ? "already" : info.c_str());
+    else
+      Log("SubmitLayer hook refused: %s%s%s", why.c_str(), info.empty() ? "" : "; ", info.c_str());
+    if (ok) {
+      if (!module.empty()) layerDriver_ = DriverNameFromModule(module);
+      layersHooked_ = true;
+      g_layersValid.store(false);  // a new display device: check its poses afresh
+      ResetLayerCheck();
+      ReadLayerFixSetting(/*announce=*/true);
+    }
+  }
+
+  // submitLayerFixSkip: drivers whose frames are not to be corrected, by name
+  // (see DriverNameFromModule), or "*".
+  void ReadLayerFixSetting(bool announce = false) {
+    char list[256] = {};
+    vr::EVRSettingsError se = vr::VRSettingsError_None;
+    vr::VRSettings()->GetString(kSection, "submitLayerFixSkip", list, sizeof list, &se);
+    const bool fix = se != vr::VRSettingsError_None || !ListNames(list, layerDriver_);
+    if (fix == g_layerFix.load() && !announce) return;
+    g_layerFix.store(fix);
+    if (layersHooked_)
+      Log("frames from driver '%s' %s", layerDriver_.c_str(),
+          fix ? "are corrected" : "are not corrected (submitLayerFixSkip)");
+  }
+
+  // Runtime check that the render poses vrserver hands the direct-mode driver
+  // are what this correction assumes: our head pose with R applied (R ∘ H),
+  // give or take the driver's prediction. vrserver, not the driver, fills them
+  // in, so this guards against SteamVR changing their space (e.g. to driver
+  // space, before world-from-driver), not against differences between
+  // drivers. Each new sample is compared as it arrives (it is at most one loop
+  // old); the last kLayerWindow samples decide, with hysteresis.
+  static constexpr int kLayerWindow = 10, kLayerValidAt = 8, kLayerInvalidAt = 4;
+  static constexpr double kLayerTolRad = 10.0 * kPi / 180.0, kLayerTolM = 0.10;
+  static constexpr int kLayerMaxLogs = 10;
+
+  void ResetLayerCheck() {
+    layerWindow_ = 0;
+    layerSamples_ = 0;
+  }
+
+  void CheckLayerSample() {
+    if (!layersHooked_) return;
+    LayerSample s;
+    const LayerSample& b = g_layerSample;
+    if (!SeqRead(b.seq, [&] {
+          for (int i = 0; i < 4; ++i) s.q[i] = Ld(b.q[i]);
+          for (int i = 0; i < 3; ++i) s.t[i] = Ld(b.t[i]);
+          s.calls = Ld(b.calls);
+        }, 64))
+      return;
+    if (s.calls == layerCheckedCalls_) return;
+    layerCheckedCalls_ = s.calls;
+    Rigid H;
+    RSnapshot R;
+    if (!LatestHead(&H) || !ReadLocalR(&R)) return;
+    const Rigid M{{s.q[0], s.q[1], s.q[2], s.q[3]}, {s.t[0], s.t[1], s.t[2]}};
+    const Rigid RH = R.identity ? H : Compose(R.r, H);
+    const double rotErr = AngleBetween(Normalize(M.q), RH.q), posErr = Length(M.t - RH.t);
+    const bool match = rotErr <= kLayerTolRad && posErr <= kLayerTolM;
+    layerWindow_ = ((layerWindow_ << 1) | (match ? 1u : 0u)) & ((1u << kLayerWindow) - 1);
+    if (layerSamples_ < kLayerWindow) ++layerSamples_;
+    int matches = 0;
+    for (uint32_t w = layerWindow_; w; w &= w - 1) ++matches;
+    const bool valid = g_layersValid.load();
+    bool next = valid;
+    if (!valid && matches >= kLayerValidAt) next = true;
+    if (valid && layerSamples_ == kLayerWindow && matches <= kLayerInvalidAt) next = false;
+    if (next == valid) return;
+    g_layersValid.store(next);
+    if (layerLogs_ < kLayerMaxLogs) {
+      ++layerLogs_;
+      Log(next ? "direct-mode render poses match ours (last %.1f deg, %.0f mm): correcting them"
+               : "direct-mode render poses no longer match ours (last %.1f deg, %.0f mm): not correcting",
+          Deg(rotErr), posErr * 1000);
+    }
+  }
+
   bool LatestHead(Rigid* h) {
     if (!shm_) return false;
     HmdSnapshot s;
@@ -547,6 +768,8 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
     else guard_.Disarm();
     // A new R changes what "expected" means for the downstream check.
     g_mismatchStreak.store(0, std::memory_order_relaxed);
+    // Samples taken under the old R compare against the wrong pose.
+    ResetLayerCheck();
   }
 
   // The user moved away or took the headset off while reclined: undo R so
@@ -640,6 +863,13 @@ class ReclineProvider : public vr::IServerTrackedDeviceProvider {
   bool spawnInjectDone_ = false;
 #endif
   bool hmdVerified_ = false;
+  PendingDisplay pendingDisplays_[kMaxAddedDisplays];  // command thread only, from here
+  bool layersHooked_ = false;
+  std::string layerDriver_;  // the hooked SubmitLayer's driver, e.g. "vrlink"
+  uint32_t layerWindow_ = 0;  // bit i: sample i back matched
+  int layerSamples_ = 0;
+  int layerLogs_ = 0;
+  uint64_t layerCheckedCalls_ = 0;
   double nextResolve_ = 0;
   AutoResetGuard guard_;                  // command thread only
   std::atomic<double> removedSince_{-1};  // RunFrame -> command thread

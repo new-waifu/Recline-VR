@@ -182,7 +182,10 @@ int Status() {
     printf("status:          SteamVR is not running (%s)\n", vr::VR_GetVRInitErrorAsEnglishDescription(e));
   }
   const Headset headset = vrOk ? QueryHeadset(vr::VRSystem()) : Headset{};
-  if (headset.steamLink) printf("may recline:     no: %s\n", SteamLinkLine(headset).c_str());
+  const uint32_t flags = d.shm && d.status.shmOk ? d.status.state.flags : 0;
+  const bool blocked = SteamLinkBlocked(headset, flags);
+  if (blocked) printf("may recline:     no: %s\n", SteamLinkLine(headset).c_str());
+  else if (headset.steamLink) printf("may recline:     %s (Steam Link frames corrected)\n", TrustText(d.diag.trust));
   else printf("may recline:     %s\n", TrustText(d.diag.trust));
   PrintRegistration();
   // Should have loaded, and nothing says why not: ask the system loader.
@@ -200,12 +203,13 @@ int Status() {
   const auto& st = d.status;
   const auto& s = st.state;
   printf("driver alive:    %s\n", st.driverAlive ? "yes" : "NO (pose_count not advancing)");
-  printf("flags:           0x%x%s%s%s%s%s\n", s.flags,
+  printf("flags:           0x%x%s%s%s%s%s%s\n", s.flags,
          s.flags & FLAG_HOOK_INSTALLED ? " hook_installed" : "",
          s.flags & FLAG_TRANSFORM_ACTIVE ? " transform_active" : "",
          s.flags & FLAG_CONFLICT_DOWNSTREAM ? " conflict_downstream" : "",
          s.flags & FLAG_WRAPPED ? " wrapped" : "",
-         s.flags & FLAG_HOOK_REFUSED ? " hook_refused" : "");
+         s.flags & FLAG_HOOK_REFUSED ? " hook_refused" : "",
+         s.flags & FLAG_LAYERS_CORRECTED ? " layers_corrected" : "");
   printf("hmd index:       %u\n", s.hmd_index);
   printf("pose_count:      %llu (%.0f Hz)\n", (unsigned long long)st.hmd.pose_count,
          double(st.hmd.pose_count - h0.pose_count) / dt);
@@ -215,7 +219,7 @@ int Status() {
   }
   PrintR("R:              ", s.R_q, s.R_t);
   printf("last cmd ack:    %u (result %u)\n", s.cmd_ack, s.cmd_result);
-  return d.diag.trust == Trust::Full && !headset.steamLink ? 0 : 1;
+  return d.diag.trust == Trust::Full && !blocked ? 0 : 1;
 }
 
 int Send(ReclineShm* shm, uint32_t cmd, const Rigid* payload) {
@@ -305,7 +309,9 @@ int Recenter(int argc, char** argv) {
     vr::VR_Shutdown();
     return 1;
   }
-  if (const Headset h = QueryHeadset(vr::VRSystem()); h.steamLink) {
+  StateSnapshot state;
+  if (const Headset h = QueryHeadset(vr::VRSystem());
+      SteamLinkBlocked(h, ReadState(d.shm->state, &state) ? state.flags : 0)) {
     fprintf(stderr, "error: %s\n", SteamLinkLine(h).c_str());
     vr::VR_Shutdown();
     return 1;

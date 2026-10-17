@@ -77,13 +77,20 @@ DriverRegistration ReadDriverRegistration();
 
 // How the headset reaches this SteamVR. Over Steam Link (SteamVR's vrlink
 // driver) the headset re-projects every frame to its own head pose, which
-// undoes a recline made here, so recline is refused (docs/DESIGN.md,
-// "Streaming to a PC"). A Steam Frame keeps its identity when streamed.
+// undoes a recline made here unless the driver corrects the frames' render
+// pose (FLAG_LAYERS_CORRECTED); without that, recline is refused. A streamed
+// Steam Frame is always refused: it draws the dashboard itself, un-reclined,
+// and Recline VR installed on the Frame covers streamed games anyway
+// (docs/DESIGN.md, "Streaming to a PC"). A Steam Frame keeps its identity when
+// streamed.
 struct Headset {
   bool steamLink = false;  // carried by vrlink
   bool frame = false;      // a Steam Frame (frame_hmd)
 };
 Headset QueryHeadset(vr::IVRSystem* sys);
+// Recline is refused: a streamed Steam Frame, or Steam Link and the driver
+// doesn't correct its frames (`flags`: StateBlock::flags).
+bool SteamLinkBlocked(const Headset& h, uint32_t flags);
 // Why recline is refused over Steam Link: a status line and a toast.
 std::string SteamLinkLine(const Headset& h);
 constexpr const char* kSteamLinkToast = "Recline VR doesn't work over Steam Link";
