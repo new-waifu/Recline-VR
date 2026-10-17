@@ -1,5 +1,5 @@
 # The pose hook (pose_hook.h), shared with tests/test_pose_hook.
-add_library(recline_pose_hook STATIC pose_hook_${RECLINE_OS}.cpp)
+add_library(recline_pose_hook STATIC pose_hook_${RECLINE_OS}.cpp layer_hook_${RECLINE_OS}.cpp)
 target_include_directories(recline_pose_hook PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(recline_pose_hook PRIVATE ${WARN} ${HIDDEN})
 target_link_libraries(recline_pose_hook PUBLIC recline_shm ${POSE_HOOK_LIBS})

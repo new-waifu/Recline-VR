@@ -1,15 +1,17 @@
-# Host unit tests: recenter math, the seqlock protocol, and the pose hook against
-# a Space Calibrator-style hook installed after it. bench_hook is run by hand.
-foreach(t test_math test_shm test_pose_hook bench_hook)
+# Host unit tests: recenter math, the seqlock protocol, the pose hook against a
+# Space Calibrator-style hook installed after it, and the direct-mode layer
+# hooks. bench_hook is run by hand.
+foreach(t test_math test_shm test_pose_hook test_layer_hook bench_hook)
   add_executable(${t} ${t}.cpp)
   target_compile_options(${t} PRIVATE ${WARN})
   target_link_libraries(${t} PRIVATE recline_shm)
 endforeach()
-foreach(t test_math test_shm test_pose_hook)
+foreach(t test_math test_shm test_pose_hook test_layer_hook)
   add_test(NAME ${t} COMMAND ${t})
 endforeach()
 
 target_link_libraries(test_pose_hook PRIVATE recline_pose_hook)
+target_link_libraries(test_layer_hook PRIVATE recline_pose_hook)
 if(WIN32)
   # Its own module with its own MinHook copy, as Space Calibrator's.
   add_library(fake_calibrator SHARED fake_calibrator_win.cpp)

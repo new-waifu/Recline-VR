@@ -535,8 +535,9 @@ ALVR) re-projects in its own way and is untested.
 
 OS-specific code sits behind two interfaces with one implementation file per
 platform: `common/platform.h` (clock, shared memory, module and executable paths,
-dynamic loading, config directory) and `driver/pose_hook.h` (install, remove,
-`wrapped`). The CMake platform block picks the files and the toolchain flags.
+dynamic loading, config directory), `driver/pose_hook.h` (install, remove,
+`wrapped`) and `driver/layer_hook.h` (the Steam Link hooks). The CMake platform
+block picks the files and the toolchain flags.
 
 Everything Frame-specific sits behind the CMake option `RECLINE_FRAME` (compile
 definition of the same name), which defaults to on for `linuxarm64` and off
