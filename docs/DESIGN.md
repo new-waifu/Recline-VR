@@ -491,17 +491,21 @@ the slot lives in `vrclient.so`. R comes from the driver's `StateBlock`, with
   internal, but a wrong layout can't produce that match, so it degrades to a
   pass-through.
 - *Camera:* `IVRCameraPassthroughInternal_001` slot 5, `(cameraType, cameraIndex,
-  bufferIndex, const info*)`, copies 0xF8 bytes of `info`, with the 3x4
-  world-from-camera pose at +0x30. Neither constant is trusted. At install the copy
-  size is read back from vrclient's code (the `memcpy` size immediate) and must
-  match. Before the first rewrite, the matrix must behave like a head-mounted
+  bufferIndex, const info*)`, copies a fixed-size `info` holding the 3x4
+  world-from-camera pose. Two layouts are known: 0xF8 bytes with the pose at +0x30
+  (SteamVR 2.19.3 and earlier), and 0xF0 bytes with the pose at +0x28 (2.19.4,
+  r26774667, which dropped a prediction-time double at +0x8 and moved every later
+  field down 8 bytes, without changing the interface version). At install the copy
+  size is read back from vrclient's code (the `memcpy` size immediate) and selects
+  the layout; any other size leaves frames untouched. Before the first rewrite, the matrix must behave like a head-mounted
   camera: `H⁻¹ ∘ M` has to stay constant per camera, within 25 cm of the head,
   over at least 10° of head motion (H being the driver's pre-R head pose from
   `HmdBlock`). Until then frames pass through uncorrected, so after a SteamVR
   start the correction begins once the head has turned a little. Any mismatch
   disables the camera hook for that XRService run. The rewrite is made on a copy.
-- Unknown interface versions are never hooked. Valve bumps these version strings
-  when a layout changes, so an update normally just turns the fix off.
+- Unknown interface versions are never hooked. Valve doesn't always bump these
+  version strings when a layout changes (the camera info shrank in 2.19.4 under
+  the same `_001`), which is why the camera hook also checks the copy size.
 
 **Failure mode.** If the shim can't be injected or a check fails, passthrough is
 misaligned while reclined, as it was before. Nothing else is affected. The driver

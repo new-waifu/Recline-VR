@@ -296,16 +296,32 @@ void Install(void* obj) {
 
 // ---------------------------------------------------------------------------
 // Passthrough camera frames: IVRCameraPassthroughInternal_001 slot 5,
-// (cameraType, cameraIndex, bufferIndex, const info*), copies kCameraInfoSize
-// bytes of `info`, whose world-from-camera pose is a row-major 3x4 at
-// kWorldFromCameraOffset. Neither constant is trusted: the copy size is read
-// back from vrclient's code at install, and the pose is validated as
-// head-mounted (C = inv(H)·M constant per camera) before the first rewrite.
+// (cameraType, cameraIndex, bufferIndex, const info*), copies a fixed number
+// of bytes of `info`, whose world-from-camera pose is a row-major 3x4 at a
+// layout-dependent offset. Neither is trusted: the copy size is read back from
+// vrclient's code at install and must match a known layout, and the pose is
+// validated as head-mounted (C = inv(H)·M constant per camera) before the
+// first rewrite.
 
 constexpr const char* kCameraPassthroughVersion = "IVRCameraPassthroughInternal_001";
 constexpr size_t kSetFrameInfoSlot = 5;
-constexpr size_t kCameraInfoSize = 0xf8;
-constexpr size_t kWorldFromCameraOffset = 0x30;
+
+// Known frame-info layouts, keyed by the size vrclient copies. The interface
+// version string did not change between them.
+//  - 0xf8: SteamVR <= 2.19.3. Header: capture time (double) at +0x0, a second
+//    double (pose prediction base time) at +0x8; pose at +0x30.
+//  - 0xf0: SteamVR 2.19.4 (r26774667) and later. The +0x8 double was removed
+//    and every later field moved down 8 bytes; pose at +0x28.
+struct CameraInfoLayout {
+  size_t size;
+  size_t worldFromCameraOffset;
+};
+constexpr CameraInfoLayout kCameraInfoLayouts[] = {{0xf8, 0x30}, {0xf0, 0x28}};
+constexpr size_t kMaxCameraInfoSize = 0xf8;
+
+// Chosen once in InstallCamera, before the hook is published.
+size_t g_cameraInfoSize = 0;
+size_t g_worldFromCameraOffset = 0;
 
 constexpr int kValidateSamples = 30;            // frames per validation window
 constexpr int kValidateMinGood = 20;            // consistent frames needed in a window
@@ -419,7 +435,7 @@ uint32_t HookSetFrameInfo(void* self, uint32_t type, uint32_t cam, uint32_t buf,
   if (!info || state == kDisabled) return orig(self, type, cam, buf, info);
 
   float m[3][4];
-  memcpy(m, static_cast<const unsigned char*>(info) + kWorldFromCameraOffset, sizeof m);
+  memcpy(m, static_cast<const unsigned char*>(info) + g_worldFromCameraOffset, sizeof m);
   if (state == kValidating) {
     ValidateSample(type, cam, m);
     return orig(self, type, cam, buf, info);
@@ -427,10 +443,10 @@ uint32_t HookSetFrameInfo(void* self, uint32_t type, uint32_t cam, uint32_t buf,
 
   Rigid R;
   if (!CurrentR(&R) || !IsRotation34(m)) return orig(self, type, cam, buf, info);
-  alignas(16) unsigned char copy[kCameraInfoSize];
-  memcpy(copy, info, sizeof copy);
+  alignas(16) unsigned char copy[kMaxCameraInfoSize];
+  memcpy(copy, info, g_cameraInfoSize);
   ApplyRToMatrix34(R, m);
-  memcpy(copy + kWorldFromCameraOffset, m, sizeof m);
+  memcpy(copy + g_worldFromCameraOffset, m, sizeof m);
   if (!g_loggedFirstCamera.exchange(true, std::memory_order_relaxed))
     Log("rewriting passthrough camera poses for the recline transform");
   return orig(self, type, cam, buf, copy);
@@ -469,19 +485,27 @@ void InstallCamera(void* obj) {
   }
   if (cur == reinterpret_cast<void*>(&HookSetFrameInfo)) return;
   const long size = CopySizeOf(cur);
-  if (size != long(kCameraInfoSize)) {
-    Log("not hooking camera frames: slot %zu copies %ld bytes, expected %zu", kSetFrameInfoSlot,
-        size, kCameraInfoSize);
+  const CameraInfoLayout* layout = nullptr;
+  for (const CameraInfoLayout& l : kCameraInfoLayouts)
+    if (size == long(l.size)) layout = &l;
+  if (!layout) {
+    Log("not hooking camera frames: slot %zu copies %ld bytes, not a known layout (0xf8, 0xf0)",
+        kSetFrameInfoSlot, size);
     return;
   }
+  g_cameraInfoSize = layout->size;
+  g_worldFromCameraOffset = layout->worldFromCameraOffset;
+  // The release store of g_origSetFrameInfo below publishes these to the hook.
   g_origSetFrameInfo.store(reinterpret_cast<SetFrameInfoFn>(cur), std::memory_order_release);
   std::string err;
   if (!PatchSlot(slot, cur, reinterpret_cast<void*>(&HookSetFrameInfo), &err)) {
     Log("camera patch failed: %s", err.c_str());
     return;
   }
-  Log("hooked %s slot %zu (orig=%p); validating before first rewrite%s%s",
-      kCameraPassthroughVersion, kSetFrameInfoSlot, cur, err.empty() ? "" : "; ", err.c_str());
+  Log("hooked %s slot %zu (orig=%p, info 0x%zx bytes, pose at +0x%zx); validating before "
+      "first rewrite%s%s",
+      kCameraPassthroughVersion, kSetFrameInfoSlot, cur, g_cameraInfoSize,
+      g_worldFromCameraOffset, err.empty() ? "" : "; ", err.c_str());
 }
 
 // ---------------------------------------------------------------------------
